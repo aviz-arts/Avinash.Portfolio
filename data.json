@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": 1794668894230,
+  "updatedAt": 1794673944081,
   "projects": [
     {
       "id": "district-7-cyberpunk",
@@ -848,34 +848,7 @@
       }
     ]
   },
-  "customSections": [
-    {
-      "id": "section-hardware-pipeline",
-      "tab": "about",
-      "kicker": "Hardware & Calibration Rig",
-      "title": "Look-Dev Hardware & Color Reference Pipeline",
-      "description": "Precision physical grading environment engineered for color-critical PBR look-development and multi-platform HDR compliance.",
-      "layout": "cards",
-      "visible": true,
-      "order": 2,
-      "items": [
-        {
-          "id": "hw-1",
-          "title": "Dual EIZO ColorEdge 4K Displays",
-          "subtitle": "Hardware Calibrated DCI-P3 & sRGB",
-          "description": "Hardware LUT-calibrated monthly via X-Rite spectrophotometer to ensure ACES filmic grading accurately maps across consumer TV panels and monitors.",
-          "tag": "Color Science"
-        },
-        {
-          "id": "hw-2",
-          "title": "Console Devkits (PS5 & Xbox Series X)",
-          "subtitle": "Hardware Target Profiling",
-          "description": "Live GPU profiling using Sony Razor and PIX on Windows to identify volumetric shadow bottlenecks and ensure locked 60 FPS.",
-          "tag": "Platform Profiling"
-        }
-      ]
-    }
-  ],
+  "customSections": [],
   "resumeMilestones": [
     {
       "id": "milestone-1",
