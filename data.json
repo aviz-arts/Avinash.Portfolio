@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": 1794674776714,
+  "updatedAt": 1794675166474,
   "projects": [
     {
       "id": "district-7-cyberpunk",
@@ -829,6 +829,10 @@
         "work:studio",
         "work:works",
         "work:reels"
+      ],
+      "home": [
+        "home:hero-text",
+        "home:hero-portrait"
       ]
     },
     "workReelsOrder": [
