@@ -33,9 +33,19 @@ import {
   fetchPortfolioDataFromGitHub,
   snapshotFromPortfolioDocument,
 } from './utils/githubSync';
-import { CustomSectionRenderer } from './components/portfolio/CustomSectionRenderer';
+import { CustomSectionCard, CustomSectionAddPrompt } from './components/portfolio/CustomSectionRenderer';
 import { EditableText } from './components/common/EditableText';
 import { CustomCursor } from './components/common/CustomCursor';
+import { SectionReorderWrapper, useTabSectionDrag } from './components/owner/SectionReorderWrapper';
+import {
+  reconcileTabSectionOrder,
+  moveSectionInOrder,
+  moveSectionToPosition,
+  nudgeSectionInOrder,
+  groupTabSectionsForAutoAlign,
+  getSectionLabel,
+  parseCustomSectionBlockId,
+} from './utils/sectionLayout';
 import {
   getStoredProjects,
   saveStoredProjects,
@@ -85,6 +95,7 @@ import {
 } from './utils/portfolioStorage';
 import {
   ArrowRight,
+  ArrowLeftRight,
   Search,
   Box,
   Lock,
@@ -815,6 +826,80 @@ export default function App() {
   const showReelPlayer = siteContent.workShowReelPlayer !== false;
   const showAbSlider = siteContent.workShowAbSlider !== false;
   const visibleReelsCount = (showReelPlayer ? 1 : 0) + (showAbSlider ? 1 : 0);
+  const reelsOrder: ('player' | 'slider')[] = siteContent.workReelsOrder || ['player', 'slider'];
+
+  // Unified ordered sections & auto-alignment for HOME tab
+  const homeFullOrder = useMemo(
+    () => reconcileTabSectionOrder('home', siteContent.tabSectionOrders?.home, customSections),
+    [siteContent.tabSectionOrders?.home, customSections]
+  );
+
+  const homeCustomMap = useMemo(
+    () => new Map(customSections.filter((s) => s.tab === 'home').map((s) => [s.id, s])),
+    [customSections]
+  );
+
+  const homeVisibleOrder = useMemo(
+    () =>
+      homeFullOrder.filter((blockId) => {
+        if (blockId === 'home:hero-text') return showHomeHeroText;
+        if (blockId === 'home:hero-portrait') return showHomePortrait;
+        const cid = parseCustomSectionBlockId(blockId);
+        if (cid) {
+          const sec = homeCustomMap.get(cid);
+          return Boolean(sec && sec.visible !== false);
+        }
+        return false;
+      }),
+    [homeFullOrder, showHomeHeroText, showHomePortrait, homeCustomMap]
+  );
+
+  const homeLayoutGroups = useMemo(
+    () => groupTabSectionsForAutoAlign('home', homeVisibleOrder),
+    [homeVisibleOrder]
+  );
+
+  const commitTabOrder = (tab: 'home' | 'work', nextOrder: string[]) => {
+    handleUpdateSiteLine('tabSectionOrders', {
+      ...(siteContent.tabSectionOrders || {}),
+      [tab]: nextOrder,
+    });
+  };
+
+  const homeDrag = useTabSectionDrag((sourceId, targetId, placement) => {
+    commitTabOrder('home', moveSectionInOrder(homeFullOrder, sourceId, targetId, placement));
+  });
+
+  // Unified ordered sections for WORK tab
+  const workFullOrder = useMemo(
+    () => reconcileTabSectionOrder('work', siteContent.tabSectionOrders?.work, customSections),
+    [siteContent.tabSectionOrders?.work, customSections]
+  );
+
+  const workCustomMap = useMemo(
+    () => new Map(customSections.filter((s) => s.tab === 'work').map((s) => [s.id, s])),
+    [customSections]
+  );
+
+  const workVisibleOrder = useMemo(
+    () =>
+      workFullOrder.filter((blockId) => {
+        if (blockId === 'work:studio') return showStudioSection;
+        if (blockId === 'work:works') return showWorksSection;
+        if (blockId === 'work:reels') return showReelsSection;
+        const cid = parseCustomSectionBlockId(blockId);
+        if (cid) {
+          const sec = workCustomMap.get(cid);
+          return Boolean(sec && sec.visible !== false);
+        }
+        return false;
+      }),
+    [workFullOrder, showStudioSection, showWorksSection, showReelsSection, workCustomMap]
+  );
+
+  const workDrag = useTabSectionDrag((sourceId, targetId, placement) => {
+    commitTabOrder('work', moveSectionInOrder(workFullOrder, sourceId, targetId, placement));
+  });
 
   return (
     <div className="min-h-screen bg-[#050505] text-zinc-100 flex flex-col selection:bg-red-500/30 selection:text-white print:bg-white print:text-zinc-950">
@@ -866,6 +951,7 @@ export default function App() {
           }}
           onOpenSectionManager={() => {
             setEditingCustomSection(null);
+            setSectionManagerTargetTab(activeTab);
             setIsSectionManagerOpen(true);
           }}
           onEditProfile={() => setIsProfileEditorOpen(true)}
@@ -923,740 +1009,868 @@ export default function App() {
       />
 
       <main className="flex-1">
-        {activeTab === 'home' && (
-          <div key="tab-home" className="page-transition-enter">
-            {/* 2. Hero Section (Home) */}
-            <section id="home" className="relative pt-20 pb-16 md:pt-28 md:pb-24 border-b border-zinc-800/80 overflow-hidden bg-gradient-to-b from-[#080808] to-[#050505]">
-          {/* Atmospheric Background Video (Very Low Opacity) */}
-          <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-            {siteContent.heroBackgroundVideoUrl ? (
-              <video
-                autoPlay
-                loop
-                muted
-                playsInline
-                preload="metadata"
-                src={siteContent.heroBackgroundVideoUrl}
-                className="w-full h-full object-cover opacity-15 filter contrast-125 saturate-50"
-              />
-            ) : (
-              <video
-                autoPlay
-                loop
-                muted
-                playsInline
-                preload="metadata"
-                src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
-                className="w-full h-full object-cover opacity-12 filter contrast-125 grayscale"
-                onError={(e) => {
-                  (e.target as HTMLElement).style.display = 'none';
-                }}
-              />
-            )}
-            {/* Monochrome Gradients & Atmospheric Overlay */}
-            <div className="absolute inset-0 bg-gradient-to-b from-[#080808]/90 via-[#050505]/85 to-[#000000]" />
-            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-zinc-800/10 via-black/40 to-black/80" />
-          </div>
-
-          {/* Subtle atmospheric ambient glow (pure radial gradient for 0 blur overdraw) */}
-          <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[640px] h-[340px] bg-[radial-gradient(closest-side,rgba(220,38,38,0.12),transparent)] rounded-full pointer-events-none z-0" />
-          <div className="absolute top-1/3 left-1/4 w-[440px] h-[280px] bg-[radial-gradient(closest-side,rgba(63,63,70,0.12),transparent)] rounded-full pointer-events-none z-0" />
-
-          <div className="w-full max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-10 xl:px-14 relative z-10">
-            {(showHomeHeroText || showHomePortrait) && (
-              <div
-                className={
-                  showHomeHeroText && showHomePortrait
-                    ? 'grid grid-cols-1 lg:grid-cols-12 gap-10 items-center'
-                    : showHomeHeroText
-                    ? 'w-full'
-                    : 'max-w-md mx-auto'
+        {activeTab === 'home' && (() => {
+          const renderHomeWrapper = (blockId: string, children: React.ReactNode, className = '') => {
+            const posIdx = homeVisibleOrder.indexOf(blockId);
+            return (
+              <SectionReorderWrapper
+                key={blockId}
+                sectionId={blockId}
+                label={getSectionLabel('home', blockId, customSections)}
+                isOwner={ownerCanEdit}
+                positionIndex={posIdx >= 0 ? posIdx : 0}
+                totalCount={homeVisibleOrder.length}
+                draggingId={homeDrag.draggingId}
+                dropTarget={homeDrag.dropTarget}
+                onMoveUp={() =>
+                  commitTabOrder('home', nudgeSectionInOrder(homeFullOrder, blockId, 'up', homeVisibleOrder))
                 }
+                onMoveDown={() =>
+                  commitTabOrder('home', nudgeSectionInOrder(homeFullOrder, blockId, 'down', homeVisibleOrder))
+                }
+                onMoveToPosition={(targetIdx) =>
+                  commitTabOrder('home', moveSectionToPosition(homeFullOrder, blockId, targetIdx, homeVisibleOrder))
+                }
+                onDragStart={homeDrag.handleDragStart}
+                onDragOver={homeDrag.handleDragOver}
+                onDrop={homeDrag.handleDrop}
+                onDragEnd={homeDrag.handleDragEnd}
+                className={className}
               >
-                {/* Left Column: Headlines & Actions */}
-                {showHomeHeroText && (
-                  <div className={showHomePortrait ? 'lg:col-span-7' : 'w-full'}>
-                    {/* Owner Background Video & Section Controls */}
-                    {ownerCanEdit && (
-                      <div className="mb-3 flex flex-wrap items-center gap-2">
-                        <button
-                          onClick={() => {
-                            setSiteContentEditorTab('hero');
-                            setIsSiteContentEditorOpen(true);
-                          }}
-                          className="px-2.5 py-1 text-[11px] font-mono text-zinc-300 bg-zinc-900/90 border border-zinc-800 rounded-lg hover:border-red-500/60 transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
-                          title="Upload or change hero background video"
-                        >
-                          <Film className="w-3.5 h-3.5 text-red-500" />
-                          <span>{siteContent.heroBackgroundVideoUrl ? '✓ Custom BG Video Active' : 'Upload Hero Background Video'}</span>
-                        </button>
-                        {siteContent.heroBackgroundVideoUrl && (
-                          <button
-                            onClick={() => handleUpdateSiteLine('heroBackgroundVideoUrl', '')}
-                            className="text-[10px] font-mono text-zinc-500 hover:text-red-400 cursor-pointer"
-                            title="Reset to default ambient background"
-                          >
-                            Reset
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleUpdateSiteLine('homeShowHeroText', false)}
-                          className="px-2.5 py-1 text-[11px] font-mono text-red-300 bg-red-950/30 border border-red-900/50 rounded-lg hover:bg-red-900/50 transition-colors flex items-center gap-1 cursor-pointer"
-                          title="Remove hero intro block (re-enable via Manage Sections)"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                          <span>Remove Hero Text</span>
-                        </button>
-                      </div>
-                    )}
+                {children}
+              </SectionReorderWrapper>
+            );
+          };
 
-                    {/* Unboxed Kicker (§1.A Zero-Pill Rule) */}
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-4 tracking-wide uppercase flex-wrap">
-                      <span className="text-red-500 font-bold">
-                        <EditableText
-                          value={siteContent.heroKickerName}
-                          onChange={(v) => handleUpdateSiteLine('heroKickerName', v)}
-                          isOwner={ownerCanEdit}
-                          label="Artist Name"
-                        />
-                      </span>
-                      <span aria-hidden="true" className="text-zinc-600">·</span>
-                      <span>
-                        <EditableText
-                          value={siteContent.heroKickerSubtitle}
-                          onChange={(v) => handleUpdateSiteLine('heroKickerSubtitle', v)}
-                          isOwner={ownerCanEdit}
-                          label="Engine & Focus"
-                        />
-                      </span>
-                    </div>
-
-                    {/* Refined Display Headline */}
-                    <h1 className="text-4xl sm:text-5xl lg:text-6xl xl:text-7xl font-display font-extrabold tracking-tight text-white leading-[1.08] text-balance">
-                      <EditableText
-                        value={siteContent.heroHeadline}
-                        onChange={(v) => handleUpdateSiteLine('heroHeadline', v)}
-                        isOwner={ownerCanEdit}
-                        label="Display Headline"
-                        as="span"
-                      />
-                    </h1>
-
-                    {/* Lead copy */}
-                    <p
-                      className={`text-base sm:text-lg text-zinc-300 leading-relaxed mt-6 font-light text-justify ${
-                        showHomePortrait ? 'max-w-3xl' : 'w-full'
-                      }`}
-                    >
-                      <EditableText
-                        value={siteContent.heroLeadCopy}
-                        onChange={(v) => handleUpdateSiteLine('heroLeadCopy', v)}
-                        isOwner={ownerCanEdit}
-                        label="Hero Lead Narrative"
-                        multiline={true}
-                        as="span"
-                      />
-                    </p>
-
-                    {/* Primary Call to Actions */}
-                    <div className="flex flex-wrap items-center gap-3.5 mt-8">
-                      <button
-                        onClick={() => {
-                          setActiveTab('work');
-                          setTimeout(() => {
-                            const studioEl = document.getElementById('studio');
-                            if (studioEl) {
-                              studioEl.scrollIntoView({ behavior: 'smooth' });
-                            }
-                          }, 120);
-                        }}
-                        className="px-5 py-3 bg-red-600 hover:bg-red-500 text-white font-medium rounded-xl text-sm transition-all flex items-center gap-2 shadow-lg shadow-red-600/30 font-sans cursor-pointer"
-                      >
-                        <Box className="w-4 h-4 text-white" />
-                        <EditableText
-                          value={siteContent.heroLabCtaText}
-                          onChange={(v) => handleUpdateSiteLine('heroLabCtaText', v)}
-                          isOwner={ownerCanEdit}
-                          label="Studio CTA Label"
-                          as="span"
-                        />
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setActiveTab('work');
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
-                        className="px-5 py-3 bg-zinc-900/90 hover:bg-zinc-800 text-white border border-zinc-700/80 rounded-xl text-sm transition-all flex items-center gap-2 font-sans cursor-pointer"
-                      >
-                        <EditableText
-                          value={siteContent.heroCaseStudiesCtaText}
-                          onChange={(v) => handleUpdateSiteLine('heroCaseStudiesCtaText', v)}
-                          isOwner={ownerCanEdit}
-                          label="Case Studies CTA Label"
-                          as="span"
-                        />
-                        <ArrowRight className="w-4 h-4 text-red-400" />
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setActiveTab('resume');
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
-                        className="px-4 py-3 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 hover:text-white border border-zinc-700/80 rounded-xl text-sm transition-all flex items-center gap-2 font-mono cursor-pointer"
-                        title="Open Resume Tab"
-                      >
-                        <Download className="w-4 h-4 text-red-500" />
-                        <EditableText
-                          value={siteContent.homeDownloadResumeCtaText || 'Download Resume'}
-                          onChange={(v) => handleUpdateSiteLine('homeDownloadResumeCtaText', v)}
-                          isOwner={ownerCanEdit}
-                          label="Download Resume CTA"
-                          as="span"
-                        />
-                      </button>
-
-                      {ownerCanEdit && (
-                        <button
-                          onClick={handleAddNewProject}
-                          className="px-3.5 py-3 bg-red-950/40 hover:bg-red-900/60 text-red-300 border border-red-800/60 rounded-xl text-sm transition-all flex items-center gap-1.5 font-sans cursor-pointer"
-                        >
-                          <span>+ Add Project</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Right Column: Clean Artist Portrait Card with Direct Inquiry */}
-                {showHomePortrait && (
-                  <div className={showHomeHeroText ? 'lg:col-span-5' : 'max-w-md mx-auto'}>
-                    <div className="relative group max-w-sm mx-auto lg:max-w-none">
-                      {/* Subtle rim-lighting glow */}
-                      <div className="absolute -inset-3 bg-[radial-gradient(closest-side,rgba(220,38,38,0.2),transparent)] rounded-3xl opacity-75 group-hover:opacity-100 transition duration-500 pointer-events-none" />
-
-                      <div className="relative bg-zinc-900/95 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl">
-                        {/* Portrait Image */}
-                        <div className="relative aspect-[4/5] sm:aspect-square lg:aspect-[4/5] w-full overflow-hidden bg-zinc-950">
-                          <img
-                            src={siteContent.avatarUrl || DEFAULT_AVATAR_URL}
-                            alt="Avinash - Game Designer & Lighting Artist"
-                            decoding="async"
-                            className="w-full h-full object-cover object-top filter contrast-105 group-hover:scale-102 transition-transform duration-700"
-                          />
-                          <div className="absolute inset-0 bg-gradient-to-t from-zinc-950/70 via-transparent to-transparent" />
-
-                          {ownerCanEdit && (
-                            <div className="absolute top-3.5 right-3.5 flex items-center gap-1.5">
-                              <button
-                                onClick={() => setIsProfileEditorOpen(true)}
-                                className="text-red-300 hover:text-white text-[11px] font-mono font-semibold flex items-center gap-1 bg-zinc-950/92 px-2.5 py-1 rounded-lg border border-red-800/60 transition-colors cursor-pointer"
-                                title="Upload or update artist portrait"
-                              >
-                                <Upload className="w-3 h-3" />
-                                <span>Edit Photo</span>
-                              </button>
-                              <button
-                                onClick={() => handleUpdateSiteLine('homeShowPortrait', false)}
-                                className="p-1.5 bg-zinc-950/92 hover:bg-red-900/80 text-red-400 border border-red-900/60 rounded-lg transition-colors cursor-pointer"
-                                title="Remove Portrait Card"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Card Footer: Direct Inquiry Only */}
-                        <div className="p-4 bg-zinc-950/90 border-t border-zinc-800/80 flex items-center justify-end text-xs font-mono">
-                          <button
-                            onClick={() => {
-                              setActiveTab('contact');
-                              window.scrollTo({ top: 0, behavior: 'smooth' });
-                            }}
-                            className="text-red-400 hover:text-red-300 transition-colors flex items-center gap-1.5 font-medium cursor-pointer"
-                          >
-                            <EditableText
-                              value={siteContent.homeDirectInquiryCtaText || 'Direct Inquiry'}
-                              onChange={(v) => handleUpdateSiteLine('homeDirectInquiryCtaText', v)}
-                              isOwner={ownerCanEdit}
-                              label="Direct Inquiry CTA"
-                              as="span"
-                            />
-                            <ArrowRight className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Custom Sections assigned to HOME tab */}
-            <CustomSectionRenderer
-              sections={customSections}
-              tab="home"
-              isOwner={ownerCanEdit}
-              onUpdateSection={handleUpdateCustomSection}
-              onDeleteSection={handleDeleteCustomSection}
-              onAddSectionClick={handleOpenAddSection}
-              onEditSectionClick={handleOpenEditSection}
-            />
-          </div>
-        </section>
-          </div>
-        )}
-
-        {activeTab === 'work' && (
-          <div key="tab-work" className="page-transition-enter">
-            {/* 3. Interactive 3D Scene Lighting Studio */}
-        {showStudioSection && (
-          <section id="studio" className="py-12 sm:py-16 lg:py-20 bg-zinc-950/60 border-b border-zinc-800/80">
-            <div className="w-full max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-10 xl:px-14">
-              <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
-                <div>
-                  <div className="text-xs font-mono text-red-500 uppercase tracking-wider mb-2">
-                    <EditableText
-                      value={siteContent.studioKicker}
-                      onChange={(v) => handleUpdateSiteLine('studioKicker', v)}
-                      isOwner={ownerCanEdit}
-                      label="Studio Kicker"
-                    />
-                  </div>
-                  <h2 className="text-3xl sm:text-4xl font-display font-bold text-zinc-100">
-                    <EditableText
-                      value={siteContent.studioHeadline}
-                      onChange={(v) => handleUpdateSiteLine('studioHeadline', v)}
-                      isOwner={ownerCanEdit}
-                      label="Studio Heading"
-                      as="span"
-                    />
-                  </h2>
-                  <p className="text-sm text-zinc-400 max-w-xl mt-2 leading-relaxed text-justify">
-                    <EditableText
-                      value={siteContent.studioDescription}
-                      onChange={(v) => handleUpdateSiteLine('studioDescription', v)}
-                      isOwner={ownerCanEdit}
-                      label="Studio Description"
-                      multiline={true}
-                      as="span"
-                    />
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2.5 flex-wrap">
-                  <div className="text-xs font-mono text-zinc-400 flex items-center gap-3 bg-zinc-900/60 border border-zinc-800 px-4 py-2 rounded-xl shrink-0">
-                    <EditableText
-                      value={siteContent.studioModesBadge}
-                      onChange={(v) => handleUpdateSiteLine('studioModesBadge', v)}
-                      isOwner={ownerCanEdit}
-                      label="Studio Modes Badge"
-                    />
-                  </div>
-                  {ownerCanEdit && (
+          const renderHomeHeroText = (isSplit: boolean) => (
+            <div>
+              {/* Owner Background Video & Section Controls */}
+              {ownerCanEdit && (
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setSiteContentEditorTab('hero');
+                      setIsSiteContentEditorOpen(true);
+                    }}
+                    className="px-2.5 py-1 text-[11px] font-mono text-zinc-300 bg-zinc-900/90 border border-zinc-800 rounded-lg hover:border-red-500/60 transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+                    title="Upload or change hero background video"
+                  >
+                    <Film className="w-3.5 h-3.5 text-red-500" />
+                    <span>{siteContent.heroBackgroundVideoUrl ? '✓ Custom BG Video Active' : 'Upload Hero Background Video'}</span>
+                  </button>
+                  {siteContent.heroBackgroundVideoUrl && (
                     <button
-                      onClick={() => handleUpdateSiteLine('workShowStudio', false)}
-                      className="px-2.5 py-2 bg-red-950/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded-xl text-xs font-mono flex items-center gap-1 cursor-pointer"
-                      title="Remove 3D Studio section (restore in Manage Sections)"
+                      onClick={() => handleUpdateSiteLine('heroBackgroundVideoUrl', '')}
+                      className="text-[10px] font-mono text-zinc-500 hover:text-red-400 cursor-pointer"
+                      title="Reset to default ambient background"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Remove Section</span>
+                      Reset
                     </button>
                   )}
+                  <button
+                    onClick={() => handleUpdateSiteLine('homeShowHeroText', false)}
+                    className="px-2.5 py-1 text-[11px] font-mono text-red-300 bg-red-950/30 border border-red-900/50 rounded-lg hover:bg-red-900/50 transition-colors flex items-center gap-1 cursor-pointer"
+                    title="Remove hero intro block (re-enable via Manage Sections)"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Remove Hero Text</span>
+                  </button>
                 </div>
+              )}
+
+              {/* Unboxed Kicker (§1.A Zero-Pill Rule) */}
+              <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-4 tracking-wide uppercase flex-wrap">
+                <span className="text-red-500 font-bold">
+                  <EditableText
+                    value={siteContent.heroKickerName}
+                    onChange={(v) => handleUpdateSiteLine('heroKickerName', v)}
+                    isOwner={ownerCanEdit}
+                    label="Artist Name"
+                  />
+                </span>
+                <span aria-hidden="true" className="text-zinc-600">·</span>
+                <span>
+                  <EditableText
+                    value={siteContent.heroKickerSubtitle}
+                    onChange={(v) => handleUpdateSiteLine('heroKickerSubtitle', v)}
+                    isOwner={ownerCanEdit}
+                    label="Engine & Focus"
+                  />
+                </span>
               </div>
 
-              {/* Three.js Studio Component */}
-              <LightingStudio />
+              {/* Refined Display Headline */}
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl xl:text-7xl font-display font-extrabold tracking-tight text-white leading-[1.08] text-balance">
+                <EditableText
+                  value={siteContent.heroHeadline}
+                  onChange={(v) => handleUpdateSiteLine('heroHeadline', v)}
+                  isOwner={ownerCanEdit}
+                  label="Display Headline"
+                  as="span"
+                />
+              </h1>
+
+              {/* Lead copy */}
+              <p
+                className={`text-base sm:text-lg text-zinc-300 leading-relaxed mt-6 font-light text-justify ${
+                  isSplit ? 'max-w-3xl' : 'w-full'
+                }`}
+              >
+                <EditableText
+                  value={siteContent.heroLeadCopy}
+                  onChange={(v) => handleUpdateSiteLine('heroLeadCopy', v)}
+                  isOwner={ownerCanEdit}
+                  label="Hero Lead Narrative"
+                  multiline={true}
+                  as="span"
+                />
+              </p>
+
+              {/* Primary Call to Actions */}
+              <div className="flex flex-wrap items-center gap-3.5 mt-8">
+                <button
+                  onClick={() => {
+                    setActiveTab('work');
+                    setTimeout(() => {
+                      const studioEl = document.getElementById('studio');
+                      if (studioEl) {
+                        studioEl.scrollIntoView({ behavior: 'smooth' });
+                      }
+                    }, 120);
+                  }}
+                  className="px-5 py-3 bg-red-600 hover:bg-red-500 text-white font-medium rounded-xl text-sm transition-all flex items-center gap-2 shadow-lg shadow-red-600/30 font-sans cursor-pointer whitespace-nowrap"
+                >
+                  <Box className="w-4 h-4 text-white" />
+                  <EditableText
+                    value={siteContent.heroLabCtaText}
+                    onChange={(v) => handleUpdateSiteLine('heroLabCtaText', v)}
+                    isOwner={ownerCanEdit}
+                    label="Studio CTA Label"
+                    as="span"
+                  />
+                </button>
+
+                <button
+                  onClick={() => {
+                    setActiveTab('work');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="px-5 py-3 bg-zinc-900/90 hover:bg-zinc-800 text-white border border-zinc-700/80 rounded-xl text-sm transition-all flex items-center gap-2 font-sans cursor-pointer whitespace-nowrap"
+                >
+                  <EditableText
+                    value={siteContent.heroCaseStudiesCtaText}
+                    onChange={(v) => handleUpdateSiteLine('heroCaseStudiesCtaText', v)}
+                    isOwner={ownerCanEdit}
+                    label="Case Studies CTA Label"
+                    as="span"
+                  />
+                  <ArrowRight className="w-4 h-4 text-red-400" />
+                </button>
+
+                <button
+                  onClick={() => {
+                    setActiveTab('resume');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="px-4 py-3 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 hover:text-white border border-zinc-700/80 rounded-xl text-sm transition-all flex items-center gap-2 font-mono cursor-pointer whitespace-nowrap"
+                  title="Open Resume Tab"
+                >
+                  <Download className="w-4 h-4 text-red-500" />
+                  <EditableText
+                    value={siteContent.homeDownloadResumeCtaText || 'Download Resume'}
+                    onChange={(v) => handleUpdateSiteLine('homeDownloadResumeCtaText', v)}
+                    isOwner={ownerCanEdit}
+                    label="Download Resume CTA"
+                    as="span"
+                  />
+                </button>
+
+                {ownerCanEdit && (
+                  <button
+                    onClick={handleAddNewProject}
+                    className="px-3.5 py-3 bg-red-950/40 hover:bg-red-900/60 text-red-300 border border-red-800/60 rounded-xl text-sm transition-all flex items-center gap-1.5 font-sans cursor-pointer whitespace-nowrap"
+                  >
+                    <span>+ Add Project</span>
+                  </button>
+                )}
+              </div>
             </div>
-          </section>
-        )}
+          );
 
-        {/* 4. Filterable Featured Works Portfolio (Work) */}
-        {showWorksSection && (
-          <section id="work" className="py-14 sm:py-20 border-b border-zinc-800/80 scroll-mt-6">
-            <div id="featured" className="scroll-mt-16" />
-            <div className="w-full max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-10 xl:px-14">
-              {/* Section Header & Filter Controls */}
-              <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
-                <div>
-                  <div className="text-xs font-mono text-red-500 uppercase tracking-wider mb-2">
-                    <EditableText
-                      value={siteContent.worksKicker}
-                      onChange={(v) => handleUpdateSiteLine('worksKicker', v)}
-                      isOwner={ownerCanEdit}
-                      label="Works Kicker"
-                    />
-                  </div>
-                  <h2 className="text-3xl sm:text-4xl font-display font-bold text-zinc-100">
-                    <EditableText
-                      value={siteContent.worksHeadline}
-                      onChange={(v) => handleUpdateSiteLine('worksHeadline', v)}
-                      isOwner={ownerCanEdit}
-                      label="Works Heading"
-                      as="span"
-                    />
-                  </h2>
-                </div>
+          const renderHomePortrait = () => (
+            <div className="relative group max-w-sm mx-auto lg:max-w-none">
+              {/* Subtle rim-lighting glow */}
+              <div className="absolute -inset-3 bg-[radial-gradient(closest-side,rgba(220,38,38,0.2),transparent)] rounded-3xl opacity-75 group-hover:opacity-100 transition duration-500 pointer-events-none" />
 
-                {/* Search input and Add Project button */}
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="relative w-full md:w-64">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-                    <input
-                      type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Filter by tag, engine..."
-                      className="w-full pl-9 pr-3 py-2 bg-zinc-900/80 border border-zinc-800 rounded-xl text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-red-500 transition-colors font-mono"
-                    />
-                  </div>
+              <div className="relative bg-zinc-900/95 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl">
+                {/* Portrait Image */}
+                <div className="relative aspect-[4/5] sm:aspect-square lg:aspect-[4/5] w-full overflow-hidden bg-zinc-950">
+                  <img
+                    src={siteContent.avatarUrl || DEFAULT_AVATAR_URL}
+                    alt="Avinash - Game Designer & Lighting Artist"
+                    decoding="async"
+                    className="w-full h-full object-cover object-top filter contrast-105 group-hover:scale-102 transition-transform duration-700"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-zinc-950/70 via-transparent to-transparent" />
 
                   {ownerCanEdit && (
-                    <>
+                    <div className="absolute top-3.5 right-3.5 flex items-center gap-1.5">
                       <button
-                        onClick={handleAddNewProject}
-                        className="px-3 py-2 bg-red-600 hover:bg-red-500 text-white font-medium rounded-xl text-xs transition-colors flex items-center gap-1.5 whitespace-nowrap shadow-sm shadow-red-600/30 cursor-pointer"
+                        onClick={() => setIsProfileEditorOpen(true)}
+                        className="text-red-300 hover:text-white text-[11px] font-mono font-semibold flex items-center gap-1 bg-zinc-950/92 px-2.5 py-1 rounded-lg border border-red-800/60 transition-colors cursor-pointer"
+                        title="Upload or update artist portrait"
                       >
-                        <span>+ New Project</span>
+                        <Upload className="w-3 h-3" />
+                        <span>Edit Photo</span>
                       </button>
                       <button
-                        onClick={() => handleUpdateSiteLine('workShowWorksGrid', false)}
-                        className="px-2.5 py-2 bg-red-950/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded-xl text-xs font-mono flex items-center gap-1 cursor-pointer"
-                        title="Remove Featured Works section (restore in Manage Sections)"
+                        onClick={() => handleUpdateSiteLine('homeShowPortrait', false)}
+                        className="p-1.5 bg-zinc-950/92 hover:bg-red-900/80 text-red-400 border border-red-900/60 rounded-lg transition-colors cursor-pointer"
+                        title="Remove Portrait Card"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        <span>Remove Section</span>
                       </button>
-                    </>
+                    </div>
                   )}
                 </div>
-              </div>
 
-              {/* Interactive Filter Tabs (§1.A Interactive Controls) */}
-              <div className="flex flex-wrap items-center gap-2 mb-10 p-1.5 bg-zinc-900/60 border border-zinc-800 rounded-2xl w-fit">
-                {[
-                  { id: 'all', label: 'All Works' },
-                  { id: 'game-design', label: 'Game Designs' },
-                  { id: 'lighting', label: 'Lighting' },
-                  { id: 'unreal', label: 'Unreal Engine 5' },
-                ].map((tab) => (
+                {/* Card Footer: Direct Inquiry Only */}
+                <div className="p-4 bg-zinc-950/90 border-t border-zinc-800/80 flex items-center justify-end text-xs font-mono">
                   <button
-                    key={tab.id}
-                    onClick={() => setSelectedCategory(tab.id)}
-                    className={`px-4 py-2 text-xs font-medium rounded-xl transition-all whitespace-nowrap cursor-pointer ${
-                      effectiveCategory === tab.id
-                        ? 'bg-zinc-800 text-white shadow-sm border border-red-500/50 font-semibold'
-                        : 'text-zinc-400 hover:text-zinc-200'
-                    }`}
+                    onClick={() => {
+                      setActiveTab('contact');
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className="text-red-400 hover:text-red-300 transition-colors flex items-center gap-1.5 font-medium cursor-pointer"
                   >
-                    {tab.label}
+                    <EditableText
+                      value={siteContent.homeDirectInquiryCtaText || 'Direct Inquiry'}
+                      onChange={(v) => handleUpdateSiteLine('homeDirectInquiryCtaText', v)}
+                      isOwner={ownerCanEdit}
+                      label="Direct Inquiry CTA"
+                      as="span"
+                    />
+                    <ArrowRight className="w-3.5 h-3.5" />
                   </button>
-                ))}
+                </div>
+              </div>
+            </div>
+          );
+
+          return (
+            <div key="tab-home" className="page-transition-enter">
+              {/* 2. Hero Section (Home) */}
+              <section id="home" className="relative pt-20 pb-16 md:pt-28 md:pb-24 border-b border-zinc-800/80 overflow-hidden bg-gradient-to-b from-[#080808] to-[#050505]">
+                {/* Atmospheric Background Video (Very Low Opacity) */}
+                <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+                  {siteContent.heroBackgroundVideoUrl ? (
+                    <video
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      preload="metadata"
+                      src={siteContent.heroBackgroundVideoUrl}
+                      className="w-full h-full object-cover opacity-15 filter contrast-125 saturate-50"
+                    />
+                  ) : (
+                    <video
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      preload="metadata"
+                      src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
+                      className="w-full h-full object-cover opacity-12 filter contrast-125 grayscale"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = 'none';
+                      }}
+                    />
+                  )}
+                  {/* Monochrome Gradients & Atmospheric Overlay */}
+                  <div className="absolute inset-0 bg-gradient-to-b from-[#080808]/90 via-[#050505]/85 to-[#000000]" />
+                  <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-zinc-800/10 via-black/40 to-black/80" />
+                </div>
+
+                {/* Subtle atmospheric ambient glow (pure radial gradient for 0 blur overdraw) */}
+                <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[640px] h-[340px] bg-[radial-gradient(closest-side,rgba(220,38,38,0.12),transparent)] rounded-full pointer-events-none z-0" />
+                <div className="absolute top-1/3 left-1/4 w-[440px] h-[280px] bg-[radial-gradient(closest-side,rgba(63,63,70,0.12),transparent)] rounded-full pointer-events-none z-0" />
+
+                <div className="w-full max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-10 xl:px-14 relative z-10 space-y-10">
+                  {homeLayoutGroups.map((group) => {
+                    if (group.kind === 'home-split') {
+                      return (
+                        <div
+                          key={`home-split-${group.ids.join('-')}`}
+                          className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center"
+                        >
+                          {group.ids.map((id) =>
+                            renderHomeWrapper(
+                              id,
+                              id === 'home:hero-text' ? renderHomeHeroText(true) : renderHomePortrait(),
+                              id === 'home:hero-text' ? 'lg:col-span-7' : 'lg:col-span-5'
+                            )
+                          )}
+                        </div>
+                      );
+                    }
+
+                    if (group.kind !== 'single') return null;
+
+                    if (group.id === 'home:hero-text') {
+                      return renderHomeWrapper('home:hero-text', renderHomeHeroText(false), 'w-full');
+                    }
+
+                    if (group.id === 'home:hero-portrait') {
+                      return renderHomeWrapper(
+                        'home:hero-portrait',
+                        renderHomePortrait(),
+                        'max-w-md mx-auto w-full'
+                      );
+                    }
+
+                    const cid = parseCustomSectionBlockId(group.id);
+                    const customSec = cid ? homeCustomMap.get(cid) : undefined;
+                    if (customSec) {
+                      return renderHomeWrapper(
+                        group.id,
+                        <CustomSectionCard
+                          section={customSec}
+                          isOwner={ownerCanEdit}
+                          onUpdateSection={handleUpdateCustomSection}
+                          onDeleteSection={handleDeleteCustomSection}
+                          onEditSectionClick={handleOpenEditSection}
+                        />
+                      );
+                    }
+
+                    return null;
+                  })}
+
+                  {ownerCanEdit && (
+                    <CustomSectionAddPrompt tab="home" onAddSectionClick={handleOpenAddSection} />
+                  )}
+                </div>
+              </section>
+            </div>
+          );
+        })()}
+
+        {activeTab === 'work' && (() => {
+          const renderReelPlayerCol = () => (
+            <div key="reel-player-col" className="space-y-3 h-full flex flex-col justify-between">
+              <div className="flex items-center justify-between text-xs font-mono text-zinc-400">
+                <span className="font-semibold text-zinc-200">
+                  <EditableText
+                    value={siteContent.reelPlayerTitle}
+                    onChange={(v) => handleUpdateSiteLine('reelPlayerTitle', v)}
+                    isOwner={ownerCanEdit}
+                    label="Reel Title"
+                  />
+                </span>
+                <span>
+                  <EditableText
+                    value={siteContent.reelPlayerEngine}
+                    onChange={(v) => handleUpdateSiteLine('reelPlayerEngine', v)}
+                    isOwner={ownerCanEdit}
+                    label="Reel Engine Tag"
+                  />
+                </span>
               </div>
 
-              {/* Projects Grid */}
-              {filteredProjects.length === 0 ? (
-                <div className="py-20 text-center text-zinc-500 font-mono text-sm border border-dashed border-zinc-800 rounded-2xl">
-                  No matching projects found for "{searchQuery}".
-                </div>
-              ) : (
-                <div className={getBalancedContainerClass(filteredProjects.length, 'cards')}>
-                  {filteredProjects.map((project, idx) => (
-                    <div
-                      key={project.id}
-                      className={getBalancedItemSpanClass(idx, filteredProjects.length, 'cards')}
+              {/* Owner Reel Controls (Only visible when logged in) */}
+              {ownerCanEdit && (
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono px-3 py-1.5 bg-zinc-900/90 border border-zinc-800 rounded-xl">
+                  <span className="text-zinc-400 flex items-center gap-1.5">
+                    <Film className="w-3.5 h-3.5 text-red-400" />
+                    <span>{siteContent.customReelVideoUrl ? 'Custom Video Loaded' : 'Procedural Canvas Loop'}</span>
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setSiteContentEditorTab('reels');
+                        setIsSiteContentEditorOpen(true);
+                      }}
+                      className="px-2 py-0.5 bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-800/60 rounded text-[10px] flex items-center gap-1 cursor-pointer"
                     >
-                      <ProjectCard
-                        project={project}
-                        onSelect={(p) => setActiveProject(p)}
-                        onOpenInStudio={handleOpenInStudio}
-                        isOwner={ownerCanEdit}
-                        onEdit={handleEditProject}
-                        onDelete={handleDeleteProject}
-                      />
-                    </div>
-                  ))}
+                      <Upload className="w-3 h-3" />
+                      <span>{siteContent.customReelVideoUrl ? 'Change Video' : 'Upload Video'}</span>
+                    </button>
+                    {siteContent.customReelVideoUrl && (
+                      <button
+                        onClick={() => handleUpdateSiteLine('customReelVideoUrl', '')}
+                        className="text-zinc-500 hover:text-red-400 text-[10px] cursor-pointer"
+                        title="Reset to procedural"
+                      >
+                        Reset
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleUpdateSiteLine('workShowReelPlayer', false)}
+                      className="px-2 py-0.5 bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-900/50 rounded text-[10px] flex items-center gap-1 cursor-pointer"
+                      title="Remove Video Reel Player"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Remove</span>
+                    </button>
+                  </div>
                 </div>
               )}
+
+              <CinematicVideoPlayer
+                style="cyberpunk"
+                title={siteContent.reelPlayerTitle}
+                duration="0:42"
+                autoPlay={false}
+                videoUrl={siteContent.customReelVideoUrl}
+              />
+              <p className="text-xs text-zinc-500 leading-relaxed text-justify">
+                <EditableText
+                  value={siteContent.reelPlayerCaption}
+                  onChange={(v) => handleUpdateSiteLine('reelPlayerCaption', v)}
+                  isOwner={ownerCanEdit}
+                  label="Reel Caption"
+                  multiline={true}
+                />
+              </p>
             </div>
-          </section>
-        )}
+          );
 
-        {/* 5. Cinematic Video Reels & A/B Lighting Comparison Section */}
-        {showReelsSection && (
-          <section id="reels" className="py-14 sm:py-20 bg-zinc-950/60 border-b border-zinc-800/80">
-            <div className="w-full max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-10 xl:px-14">
-              <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-12">
-                <div className="flex-1">
-                  <div className="text-xs font-mono text-red-500 uppercase tracking-wider mb-2">
-                    <EditableText
-                      value={siteContent.reelsKicker}
-                      onChange={(v) => handleUpdateSiteLine('reelsKicker', v)}
-                      isOwner={ownerCanEdit}
-                      label="Reels Kicker"
-                    />
+          const renderAbSliderCol = () => (
+            <div key="ab-slider-col" className="space-y-3 h-full flex flex-col justify-between">
+              <div className="flex items-center justify-between text-xs font-mono text-zinc-400">
+                <span className="font-semibold text-zinc-200">
+                  <EditableText
+                    value={siteContent.abSliderTitle}
+                    onChange={(v) => handleUpdateSiteLine('abSliderTitle', v)}
+                    isOwner={ownerCanEdit}
+                    label="Slider Title"
+                  />
+                </span>
+                <span>
+                  <EditableText
+                    value={siteContent.abSliderHint}
+                    onChange={(v) => handleUpdateSiteLine('abSliderHint', v)}
+                    isOwner={ownerCanEdit}
+                    label="Slider Hint"
+                  />
+                </span>
+              </div>
+
+              {/* Owner Slider Controls (Only visible when logged in) */}
+              {ownerCanEdit && (
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono px-3 py-1.5 bg-zinc-900/90 border border-zinc-800 rounded-xl">
+                  <span className="text-zinc-400 flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-red-400" />
+                    <span>{siteContent.customAbSliderLeftUrl || siteContent.customAbSliderRightUrl ? 'Custom Passes Loaded' : 'Procedural Canvas Passes'}</span>
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setSiteContentEditorTab('reels');
+                        setIsSiteContentEditorOpen(true);
+                      }}
+                      className="px-2 py-0.5 bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-800/60 rounded text-[10px] flex items-center gap-1 cursor-pointer"
+                    >
+                      <Upload className="w-3 h-3" />
+                      <span>Upload Passes</span>
+                    </button>
+                    {(siteContent.customAbSliderLeftUrl || siteContent.customAbSliderRightUrl) && (
+                      <button
+                        onClick={() => {
+                          handleUpdateSiteLine('customAbSliderLeftUrl', '');
+                          handleUpdateSiteLine('customAbSliderRightUrl', '');
+                        }}
+                        className="text-zinc-500 hover:text-red-400 text-[10px] cursor-pointer"
+                        title="Reset to procedural passes"
+                      >
+                        Reset
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleUpdateSiteLine('workShowAbSlider', false)}
+                      className="px-2 py-0.5 bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-900/50 rounded text-[10px] flex items-center gap-1 cursor-pointer"
+                      title="Remove A/B Inspection Slider"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Remove</span>
+                    </button>
                   </div>
-                  <h2 className="text-3xl sm:text-4xl font-display font-bold text-zinc-100">
-                    <EditableText
-                      value={siteContent.reelsHeadline}
-                      onChange={(v) => handleUpdateSiteLine('reelsHeadline', v)}
-                      isOwner={ownerCanEdit}
-                      label="Reels Heading"
-                      as="span"
-                    />
-                  </h2>
-                  <p className="text-sm text-zinc-400 mt-2 leading-relaxed text-justify">
-                    <EditableText
-                      value={siteContent.reelsDescription}
-                      onChange={(v) => handleUpdateSiteLine('reelsDescription', v)}
-                      isOwner={ownerCanEdit}
-                      label="Reels Description"
-                      multiline={true}
-                      as="span"
-                    />
-                  </p>
                 </div>
+              )}
 
-                {ownerCanEdit && (
-                  <button
-                    onClick={() => handleUpdateSiteLine('workShowReels', false)}
-                    className="px-2.5 py-1.5 bg-red-950/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded-xl text-xs font-mono flex items-center gap-1 self-start md:self-auto cursor-pointer"
-                    title="Remove Reels & A/B section (restore in Manage Sections)"
+              <LightingComparisonSlider
+                style="crypt"
+                leftPass="clay"
+                rightPass="final"
+                leftLabel="Lighting Only (Clay)"
+                rightLabel="Final Composition"
+                leftImageUrl={siteContent.customAbSliderLeftUrl}
+                rightImageUrl={siteContent.customAbSliderRightUrl}
+              />
+              <p className="text-xs text-zinc-500 leading-relaxed text-justify">
+                <EditableText
+                  value={siteContent.abSliderCaption}
+                  onChange={(v) => handleUpdateSiteLine('abSliderCaption', v)}
+                  isOwner={ownerCanEdit}
+                  label="Slider Caption"
+                  multiline={true}
+                />
+              </p>
+            </div>
+          );
+
+          const renderWorkBlock = (blockId: string): React.ReactNode => {
+            if (blockId === 'work:studio') {
+              return (
+                <section id="studio" className="py-12 sm:py-16 lg:py-20 bg-zinc-950/60 border-b border-zinc-800/80">
+                  <div className="w-full max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-10 xl:px-14">
+                    <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
+                      <div>
+                        <div className="text-xs font-mono text-red-500 uppercase tracking-wider mb-2">
+                          <EditableText
+                            value={siteContent.studioKicker}
+                            onChange={(v) => handleUpdateSiteLine('studioKicker', v)}
+                            isOwner={ownerCanEdit}
+                            label="Studio Kicker"
+                          />
+                        </div>
+                        <h2 className="text-3xl sm:text-4xl font-display font-bold text-zinc-100">
+                          <EditableText
+                            value={siteContent.studioHeadline}
+                            onChange={(v) => handleUpdateSiteLine('studioHeadline', v)}
+                            isOwner={ownerCanEdit}
+                            label="Studio Heading"
+                            as="span"
+                          />
+                        </h2>
+                        <p className="text-sm text-zinc-400 max-w-xl mt-2 leading-relaxed text-justify">
+                          <EditableText
+                            value={siteContent.studioDescription}
+                            onChange={(v) => handleUpdateSiteLine('studioDescription', v)}
+                            isOwner={ownerCanEdit}
+                            label="Studio Description"
+                            multiline={true}
+                            as="span"
+                          />
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <div className="text-xs font-mono text-zinc-400 flex items-center gap-3 bg-zinc-900/60 border border-zinc-800 px-4 py-2 rounded-xl shrink-0">
+                          <EditableText
+                            value={siteContent.studioModesBadge}
+                            onChange={(v) => handleUpdateSiteLine('studioModesBadge', v)}
+                            isOwner={ownerCanEdit}
+                            label="Studio Modes Badge"
+                          />
+                        </div>
+                        {ownerCanEdit && (
+                          <button
+                            onClick={() => handleUpdateSiteLine('workShowStudio', false)}
+                            className="px-2.5 py-2 bg-red-950/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded-xl text-xs font-mono flex items-center gap-1 cursor-pointer"
+                            title="Remove 3D Studio section (restore in Manage Sections)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Remove Section</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Three.js Studio Component */}
+                    <LightingStudio />
+                  </div>
+                </section>
+              );
+            }
+
+            if (blockId === 'work:works') {
+              return (
+                <section id="work" className="py-14 sm:py-20 border-b border-zinc-800/80 scroll-mt-6">
+                  <div id="featured" className="scroll-mt-16" />
+                  <div className="w-full max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-10 xl:px-14">
+                    {/* Section Header & Filter Controls */}
+                    <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
+                      <div>
+                        <div className="text-xs font-mono text-red-500 uppercase tracking-wider mb-2">
+                          <EditableText
+                            value={siteContent.worksKicker}
+                            onChange={(v) => handleUpdateSiteLine('worksKicker', v)}
+                            isOwner={ownerCanEdit}
+                            label="Works Kicker"
+                          />
+                        </div>
+                        <h2 className="text-3xl sm:text-4xl font-display font-bold text-zinc-100">
+                          <EditableText
+                            value={siteContent.worksHeadline}
+                            onChange={(v) => handleUpdateSiteLine('worksHeadline', v)}
+                            isOwner={ownerCanEdit}
+                            label="Works Heading"
+                            as="span"
+                          />
+                        </h2>
+                      </div>
+
+                      {/* Search input and Add Project button */}
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="relative w-full md:w-64">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                          <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder="Filter by tag, engine..."
+                            className="w-full pl-9 pr-3 py-2 bg-zinc-900/80 border border-zinc-800 rounded-xl text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-red-500 transition-colors font-mono"
+                          />
+                        </div>
+
+                        {ownerCanEdit && (
+                          <>
+                            <button
+                              onClick={handleAddNewProject}
+                              className="px-3 py-2 bg-red-600 hover:bg-red-500 text-white font-medium rounded-xl text-xs transition-colors flex items-center gap-1.5 whitespace-nowrap shadow-sm shadow-red-600/30 cursor-pointer"
+                            >
+                              <span>+ New Project</span>
+                            </button>
+                            <button
+                              onClick={() => handleUpdateSiteLine('workShowWorksGrid', false)}
+                              className="px-2.5 py-2 bg-red-950/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded-xl text-xs font-mono flex items-center gap-1 cursor-pointer"
+                              title="Remove Featured Works section (restore in Manage Sections)"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Remove Section</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Interactive Filter Tabs (§1.A Interactive Controls) */}
+                    <div className="flex flex-wrap items-center gap-2 mb-10 p-1.5 bg-zinc-900/60 border border-zinc-800 rounded-2xl w-fit">
+                      {[
+                        { id: 'all', label: 'All Works' },
+                        { id: 'game-design', label: 'Game Designs' },
+                        { id: 'lighting', label: 'Lighting' },
+                        { id: 'unreal', label: 'Unreal Engine 5' },
+                      ].map((tab) => (
+                        <button
+                          key={tab.id}
+                          onClick={() => setSelectedCategory(tab.id)}
+                          className={`px-4 py-2 text-xs font-medium rounded-xl transition-all whitespace-nowrap cursor-pointer ${
+                            effectiveCategory === tab.id
+                              ? 'bg-zinc-800 text-white shadow-sm border border-red-500/50 font-semibold'
+                              : 'text-zinc-400 hover:text-zinc-200'
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Projects Grid */}
+                    {filteredProjects.length === 0 ? (
+                      <div className="py-20 text-center text-zinc-500 font-mono text-sm border border-dashed border-zinc-800 rounded-2xl">
+                        No matching projects found for "{searchQuery}".
+                      </div>
+                    ) : (
+                      <div className={getBalancedContainerClass(filteredProjects.length, 'cards')}>
+                        {filteredProjects.map((project, idx) => (
+                          <div
+                            key={project.id}
+                            className={getBalancedItemSpanClass(idx, filteredProjects.length, 'cards')}
+                          >
+                            <ProjectCard
+                              project={project}
+                              onSelect={(p) => setActiveProject(p)}
+                              onOpenInStudio={handleOpenInStudio}
+                              isOwner={ownerCanEdit}
+                              onEdit={handleEditProject}
+                              onDelete={handleDeleteProject}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </section>
+              );
+            }
+
+            if (blockId === 'work:reels') {
+              return (
+                <section id="reels" className="py-14 sm:py-20 bg-zinc-950/60 border-b border-zinc-800/80">
+                  <div className="w-full max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-10 xl:px-14">
+                    <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-12">
+                      <div className="flex-1">
+                        <div className="text-xs font-mono text-red-500 uppercase tracking-wider mb-2">
+                          <EditableText
+                            value={siteContent.reelsKicker}
+                            onChange={(v) => handleUpdateSiteLine('reelsKicker', v)}
+                            isOwner={ownerCanEdit}
+                            label="Reels Kicker"
+                          />
+                        </div>
+                        <h2 className="text-3xl sm:text-4xl font-display font-bold text-zinc-100">
+                          <EditableText
+                            value={siteContent.reelsHeadline}
+                            onChange={(v) => handleUpdateSiteLine('reelsHeadline', v)}
+                            isOwner={ownerCanEdit}
+                            label="Reels Heading"
+                            as="span"
+                          />
+                        </h2>
+                        <p className="text-sm text-zinc-400 mt-2 leading-relaxed text-justify">
+                          <EditableText
+                            value={siteContent.reelsDescription}
+                            onChange={(v) => handleUpdateSiteLine('reelsDescription', v)}
+                            isOwner={ownerCanEdit}
+                            label="Reels Description"
+                            multiline={true}
+                            as="span"
+                          />
+                        </p>
+                      </div>
+
+                      {ownerCanEdit && (
+                        <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
+                          {showReelPlayer && showAbSlider && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleUpdateSiteLine(
+                                  'workReelsOrder',
+                                  reelsOrder[0] === 'player' ? ['slider', 'player'] : ['player', 'slider']
+                                )
+                              }
+                              className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 rounded-xl text-xs font-mono flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                              title="Swap Video Player and A/B Slider columns"
+                            >
+                              <ArrowLeftRight className="w-3.5 h-3.5 text-red-400" />
+                              <span>Swap Player ⇄ A/B</span>
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleUpdateSiteLine('workShowReels', false)}
+                            className="px-2.5 py-1.5 bg-red-950/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded-xl text-xs font-mono flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                            title="Remove Reels & A/B section (restore in Manage Sections)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Remove Section</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Adaptive Showcase Grid: 2 Columns or Full Width when 1 remains */}
+                    {visibleReelsCount > 0 && (
+                      <div className={`${getBalancedContainerClass(visibleReelsCount, 'split')} gap-8 items-stretch`}>
+                        {reelsOrder.map((slot) => {
+                          if (slot === 'player' && showReelPlayer) {
+                            return renderReelPlayerCol();
+                          }
+                          if (slot === 'slider' && showAbSlider) {
+                            return renderAbSliderCol();
+                          }
+                          return null;
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </section>
+              );
+            }
+
+            const cid = parseCustomSectionBlockId(blockId);
+            const customSec = cid ? workCustomMap.get(cid) : undefined;
+            if (customSec) {
+              return (
+                <div className="w-full max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-10 xl:px-14 py-10">
+                  <CustomSectionCard
+                    section={customSec}
+                    isOwner={ownerCanEdit}
+                    onUpdateSection={handleUpdateCustomSection}
+                    onDeleteSection={handleDeleteCustomSection}
+                    onEditSectionClick={handleOpenEditSection}
+                  />
+                </div>
+              );
+            }
+
+            return null;
+          };
+
+          return (
+            <div key="tab-work" className="page-transition-enter">
+              {workVisibleOrder.map((blockId, idx) => {
+                const content = renderWorkBlock(blockId);
+                if (!content) return null;
+                const isCustom = Boolean(parseCustomSectionBlockId(blockId));
+                return (
+                  <SectionReorderWrapper
+                    key={blockId}
+                    sectionId={blockId}
+                    label={getSectionLabel('work', blockId, customSections)}
+                    isOwner={ownerCanEdit}
+                    positionIndex={idx}
+                    totalCount={workVisibleOrder.length}
+                    draggingId={workDrag.draggingId}
+                    dropTarget={workDrag.dropTarget}
+                    onMoveUp={() =>
+                      commitTabOrder('work', nudgeSectionInOrder(workFullOrder, blockId, 'up', workVisibleOrder))
+                    }
+                    onMoveDown={() =>
+                      commitTabOrder('work', nudgeSectionInOrder(workFullOrder, blockId, 'down', workVisibleOrder))
+                    }
+                    onMoveToPosition={(targetIdx) =>
+                      commitTabOrder('work', moveSectionToPosition(workFullOrder, blockId, targetIdx, workVisibleOrder))
+                    }
+                    onDragStart={workDrag.handleDragStart}
+                    onDragOver={workDrag.handleDragOver}
+                    onDrop={workDrag.handleDrop}
+                    onDragEnd={workDrag.handleDragEnd}
+                    barAlignment="container"
+                    className={isCustom ? 'border-b border-zinc-800/80' : ''}
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Remove Section</span>
-                  </button>
-                )}
-              </div>
+                    {content}
+                  </SectionReorderWrapper>
+                );
+              })}
 
-              {/* Adaptive Showcase Grid: 2 Columns or Full Width when 1 remains */}
-              {visibleReelsCount > 0 && (
-                <div className={`${getBalancedContainerClass(visibleReelsCount, 'split')} gap-8 items-stretch`}>
-                  {/* Left Column: Live Cinematic Video Reel Player */}
-                  {showReelPlayer && (
-                    <div className="space-y-3 h-full flex flex-col justify-between">
-                <div className="flex items-center justify-between text-xs font-mono text-zinc-400">
-                  <span className="font-semibold text-zinc-200">
-                    <EditableText
-                      value={siteContent.reelPlayerTitle}
-                      onChange={(v) => handleUpdateSiteLine('reelPlayerTitle', v)}
-                      isOwner={ownerCanEdit}
-                      label="Reel Title"
-                    />
-                  </span>
-                  <span>
-                    <EditableText
-                      value={siteContent.reelPlayerEngine}
-                      onChange={(v) => handleUpdateSiteLine('reelPlayerEngine', v)}
-                      isOwner={ownerCanEdit}
-                      label="Reel Engine Tag"
-                    />
-                  </span>
-                </div>
-
-                {/* Owner Reel Controls (Only visible when logged in) */}
-                {ownerCanEdit && (
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono px-3 py-1.5 bg-zinc-900/90 border border-zinc-800 rounded-xl">
-                    <span className="text-zinc-400 flex items-center gap-1.5">
-                      <Film className="w-3.5 h-3.5 text-red-400" />
-                      <span>{siteContent.customReelVideoUrl ? 'Custom Video Loaded' : 'Procedural Canvas Loop'}</span>
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          setSiteContentEditorTab('reels');
-                          setIsSiteContentEditorOpen(true);
-                        }}
-                        className="px-2 py-0.5 bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-800/60 rounded text-[10px] flex items-center gap-1 cursor-pointer"
-                      >
-                        <Upload className="w-3 h-3" />
-                        <span>{siteContent.customReelVideoUrl ? 'Change Video' : 'Upload Video'}</span>
-                      </button>
-                      {siteContent.customReelVideoUrl && (
-                        <button
-                          onClick={() => handleUpdateSiteLine('customReelVideoUrl', '')}
-                          className="text-zinc-500 hover:text-red-400 text-[10px] cursor-pointer"
-                          title="Reset to procedural"
-                        >
-                          Reset
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleUpdateSiteLine('workShowReelPlayer', false)}
-                        className="px-2 py-0.5 bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-900/50 rounded text-[10px] flex items-center gap-1 cursor-pointer"
-                        title="Remove Video Reel Player"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        <span>Remove</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                <CinematicVideoPlayer
-                  style="cyberpunk"
-                  title={siteContent.reelPlayerTitle}
-                  duration="0:42"
-                  autoPlay={false}
-                  videoUrl={siteContent.customReelVideoUrl}
-                />
-                <p className="text-xs text-zinc-500 leading-relaxed text-justify">
-                  <EditableText
-                    value={siteContent.reelPlayerCaption}
-                    onChange={(v) => handleUpdateSiteLine('reelPlayerCaption', v)}
-                    isOwner={ownerCanEdit}
-                    label="Reel Caption"
-                    multiline={true}
-                  />
-                </p>
-              </div>
-                  )}
-
-                  {/* Right Column: Interactive Before/After Split Slider */}
-                  {showAbSlider && (
-                    <div className="space-y-3 h-full flex flex-col justify-between">
-                <div className="flex items-center justify-between text-xs font-mono text-zinc-400">
-                  <span className="font-semibold text-zinc-200">
-                    <EditableText
-                      value={siteContent.abSliderTitle}
-                      onChange={(v) => handleUpdateSiteLine('abSliderTitle', v)}
-                      isOwner={ownerCanEdit}
-                      label="Slider Title"
-                    />
-                  </span>
-                  <span>
-                    <EditableText
-                      value={siteContent.abSliderHint}
-                      onChange={(v) => handleUpdateSiteLine('abSliderHint', v)}
-                      isOwner={ownerCanEdit}
-                      label="Slider Hint"
-                    />
-                  </span>
-                </div>
-
-                {/* Owner Slider Controls (Only visible when logged in) */}
-                {ownerCanEdit && (
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono px-3 py-1.5 bg-zinc-900/90 border border-zinc-800 rounded-xl">
-                    <span className="text-zinc-400 flex items-center gap-1.5">
-                      <ImageIcon className="w-3.5 h-3.5 text-red-400" />
-                      <span>{siteContent.customAbSliderLeftUrl || siteContent.customAbSliderRightUrl ? 'Custom Passes Loaded' : 'Procedural Canvas Passes'}</span>
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          setSiteContentEditorTab('reels');
-                          setIsSiteContentEditorOpen(true);
-                        }}
-                        className="px-2 py-0.5 bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-800/60 rounded text-[10px] flex items-center gap-1 cursor-pointer"
-                      >
-                        <Upload className="w-3 h-3" />
-                        <span>Upload Passes</span>
-                      </button>
-                      {(siteContent.customAbSliderLeftUrl || siteContent.customAbSliderRightUrl) && (
-                        <button
-                          onClick={() => {
-                            handleUpdateSiteLine('customAbSliderLeftUrl', '');
-                            handleUpdateSiteLine('customAbSliderRightUrl', '');
-                          }}
-                          className="text-zinc-500 hover:text-red-400 text-[10px] cursor-pointer"
-                          title="Reset to procedural passes"
-                        >
-                          Reset
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleUpdateSiteLine('workShowAbSlider', false)}
-                        className="px-2 py-0.5 bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-900/50 rounded text-[10px] flex items-center gap-1 cursor-pointer"
-                        title="Remove A/B Inspection Slider"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        <span>Remove</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                <LightingComparisonSlider
-                  style="crypt"
-                  leftPass="clay"
-                  rightPass="final"
-                  leftLabel="Lighting Only (Clay)"
-                  rightLabel="Final Composition"
-                  leftImageUrl={siteContent.customAbSliderLeftUrl}
-                  rightImageUrl={siteContent.customAbSliderRightUrl}
-                />
-                <p className="text-xs text-zinc-500 leading-relaxed text-justify">
-                  <EditableText
-                    value={siteContent.abSliderCaption}
-                    onChange={(v) => handleUpdateSiteLine('abSliderCaption', v)}
-                    isOwner={ownerCanEdit}
-                    label="Slider Caption"
-                    multiline={true}
-                  />
-                </p>
-              </div>
-                  )}
+              {ownerCanEdit && (
+                <div className="w-full max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-10 xl:px-14 py-10">
+                  <CustomSectionAddPrompt tab="work" onAddSectionClick={handleOpenAddSection} />
                 </div>
               )}
             </div>
-          </section>
-        )}
+          );
+        })()}
 
-        {/* Custom Sections assigned to WORK tab */}
-        {customSections.some((s) => s.tab === 'work' && s.visible !== false) && (
-          <div className="w-full max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-10 xl:px-14 py-10">
-            <CustomSectionRenderer
-              sections={customSections}
-              tab="work"
+        {activeTab === 'about' && (
+          <div key="tab-about" className="page-transition-enter">
+            {/* 7. About, Toolset & Interactive Career Timeline (unified ordered + custom sections) */}
+            <AboutSection
+              onOpenContact={() => {
+                setActiveTab('contact');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              profile={profile}
+              onUpdateProfile={handleSaveProfile}
+              siteContent={siteContent}
               isOwner={ownerCanEdit}
-              onUpdateSection={handleUpdateCustomSection}
-              onDeleteSection={handleDeleteCustomSection}
+              onUpdateSiteContent={handleUpdateSiteLine}
+              milestones={resumeMilestones}
+              onUpdateMilestone={handleUpdateResumeMilestone}
+              onCreateMilestone={handleCreateResumeMilestone}
+              onDeleteMilestone={handleDeleteResumeMilestone}
+              customSections={customSections}
+              onUpdateCustomSection={handleUpdateCustomSection}
+              onDeleteCustomSection={handleDeleteCustomSection}
               onAddSectionClick={handleOpenAddSection}
               onEditSectionClick={handleOpenEditSection}
             />
           </div>
         )}
-      </div>
-    )}
-
-    {activeTab === 'about' && (
-      <div key="tab-about" className="page-transition-enter">
-        {/* 7. About, Toolset & Interactive Career Timeline */}
-        <AboutSection
-          onOpenContact={() => {
-            setActiveTab('contact');
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          }}
-          profile={profile}
-          onUpdateProfile={handleSaveProfile}
-          siteContent={siteContent}
-          isOwner={ownerCanEdit}
-          onUpdateSiteContent={handleUpdateSiteLine}
-          milestones={resumeMilestones}
-          onUpdateMilestone={handleUpdateResumeMilestone}
-          onCreateMilestone={handleCreateResumeMilestone}
-          onDeleteMilestone={handleDeleteResumeMilestone}
-        />
-
-        {/* Custom Sections assigned to ABOUT tab (e.g. Hardware Rig, Look-dev Pipeline) */}
-        {customSections.some((s) => s.tab === 'about' && s.visible !== false) && (
-          <div className="w-full max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-10 xl:px-14 pb-12">
-            <CustomSectionRenderer
-              sections={customSections}
-              tab="about"
-              isOwner={ownerCanEdit}
-              onUpdateSection={handleUpdateCustomSection}
-              onDeleteSection={handleDeleteCustomSection}
-              onAddSectionClick={handleOpenAddSection}
-              onEditSectionClick={handleOpenEditSection}
-            />
-          </div>
-        )}
-      </div>
-    )}
 
     {activeTab === 'resume' && (
       <div key="tab-resume" className="page-transition-enter">

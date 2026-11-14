@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": 1794673944081,
+  "updatedAt": 1794674776714,
   "projects": [
     {
       "id": "district-7-cyberpunk",
@@ -816,6 +816,25 @@
     "contactPhoneCardBadge": "IST Business Hours",
     "contactFormTitle": "Send Direct Message",
     "contactSocialKicker": "CONNECT ON SOCIAL",
+    "tabSectionOrders": {
+      "resume": [
+        "resume:header",
+        "resume:benchmarks",
+        "resume:competency",
+        "resume:executive",
+        "resume:skills",
+        "resume:education"
+      ],
+      "work": [
+        "work:studio",
+        "work:works",
+        "work:reels"
+      ]
+    },
+    "workReelsOrder": [
+      "player",
+      "slider"
+    ],
     "footerName": "Avinash",
     "footerRole": "Game Designer | Lighting Artist",
     "footerCopyright": "Avinash. All rights reserved.",

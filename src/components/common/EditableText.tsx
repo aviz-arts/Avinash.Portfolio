@@ -9,6 +9,7 @@ interface EditableTextProps {
   className?: string;
   multiline?: boolean;
   label?: string;
+  placeholder?: string;
 }
 
 export const EditableText: React.FC<EditableTextProps> = ({
@@ -19,6 +20,7 @@ export const EditableText: React.FC<EditableTextProps> = ({
   className = '',
   multiline = false,
   label,
+  placeholder,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -75,6 +77,7 @@ export const EditableText: React.FC<EditableTextProps> = ({
             onChange={(e) => setDraft(e.target.value)}
             onBlur={handleSave}
             onKeyDown={handleKeyDown}
+            placeholder={placeholder}
             rows={3}
             className={`w-full p-2 bg-zinc-900 border-2 border-red-500 rounded-lg text-zinc-100 font-sans text-xs focus:outline-none shadow-2xl resize-y ${className}`}
           />
@@ -86,6 +89,7 @@ export const EditableText: React.FC<EditableTextProps> = ({
             onChange={(e) => setDraft(e.target.value)}
             onBlur={handleSave}
             onKeyDown={handleKeyDown}
+            placeholder={placeholder}
             className={`w-full px-2 py-1 bg-zinc-900 border-2 border-red-500 rounded text-zinc-100 font-sans text-xs focus:outline-none shadow-2xl ${className}`}
           />
         )}
@@ -106,7 +110,11 @@ export const EditableText: React.FC<EditableTextProps> = ({
       title={`Owner: Click to edit "${label || 'text'}"`}
       className={`group/edit relative cursor-pointer hover:outline-dashed hover:outline-1 hover:outline-red-500/80 hover:bg-red-500/10 rounded px-1 -mx-1 transition-all ${className}`}
     >
-      {value}
+      {value ? (
+        value
+      ) : (
+        <span className="text-zinc-500 italic font-normal">{placeholder || `Add ${label || 'text'}...`}</span>
+      )}
       <span className="inline-block opacity-0 group-hover/edit:opacity-100 transition-opacity ml-1.5 align-middle">
         <Edit3 className="w-3 h-3 text-red-500 inline" />
       </span>

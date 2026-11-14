@@ -34,7 +34,20 @@ export interface CustomSectionItem {
   tag?: string;
   linkText?: string;
   linkUrl?: string;
+  mediaUrl?: string;
+  mediaType?: 'auto' | 'image' | 'video';
+  mediaCaption?: string;
+  highlights?: string[];
 }
+
+export type CustomSectionLayout =
+  | 'cards'
+  | 'feature'
+  | 'split'
+  | 'stats'
+  | 'callout'
+  | 'editorial'
+  | 'gallery';
 
 export interface CustomSection {
   id: string;
@@ -42,7 +55,14 @@ export interface CustomSection {
   kicker: string;
   title: string;
   description: string;
-  layout: 'cards' | 'feature' | 'split' | 'stats' | 'callout';
+  bodyContent?: string;
+  coverMediaUrl?: string;
+  coverMediaType?: 'auto' | 'image' | 'video';
+  coverMediaCaption?: string;
+  mediaPlacement?: 'top' | 'left' | 'right';
+  ctaLabel?: string;
+  ctaUrl?: string;
+  layout: CustomSectionLayout;
   items: CustomSectionItem[];
   visible: boolean;
   order: number;
@@ -226,6 +246,10 @@ export interface SiteContent {
   contactPhoneCardBadge?: string;
   contactFormTitle?: string;
   contactSocialKicker?: string;
+
+  // Per-Tab Section Ordering & Auto-Alignment (Owner Mode Layout)
+  tabSectionOrders?: Partial<Record<'home' | 'work' | 'about' | 'resume' | 'contact', string[]>>;
+  workReelsOrder?: ['player', 'slider'] | ['slider', 'player'];
 
   // Footer
   footerName: string;
@@ -545,6 +569,10 @@ export const DEFAULT_SITE_CONTENT: SiteContent = {
   contactPhoneCardBadge: 'IST Business Hours',
   contactFormTitle: 'Send Direct Message',
   contactSocialKicker: 'CONNECT ON SOCIAL',
+
+  // Per-Tab Section Ordering
+  tabSectionOrders: {},
+  workReelsOrder: ['player', 'slider'],
 
   // Footer
   footerName: 'Avinash',
@@ -1022,6 +1050,12 @@ export function updateSiteContentKey<K extends keyof SiteContent>(
       } catch {
         parsedValue = value.split('\n').map((s: string) => s.trim()).filter(Boolean);
       }
+    }
+  } else if ((key === 'tabSectionOrders' || key === 'workReelsOrder') && typeof value === 'string') {
+    try {
+      parsedValue = JSON.parse(value);
+    } catch {
+      // keep raw value if not valid JSON
     }
   }
   const updated: SiteContent = sanitizeJsonStrings({ ...base, [key]: parsedValue });

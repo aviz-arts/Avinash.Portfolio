@@ -1,7 +1,8 @@
-import React, { useState, useRef } from 'react';
-import { Upload, Link2, X, Image as ImageIcon, Film, Check, AlertCircle, Loader2 } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Upload, Link2, X, Image as ImageIcon, Film, AlertCircle, Loader2 } from 'lucide-react';
 import { compressImageFile, readFileAsDataUrl, formatFileSize } from '../../utils/mediaUploader';
 import { uploadMediaFileToServer } from '../../utils/portfolioStorage';
+import { resolveMediaSource } from '../../utils/mediaHelpers';
 
 interface MediaUploadFieldProps {
   label: string;
@@ -29,9 +30,18 @@ export const MediaUploadField: React.FC<MediaUploadFieldProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    setUrlInput(value || '');
+  }, [value]);
+
+  const resolvedPreview = resolveMediaSource(
+    value,
+    mediaType === 'video' ? 'video' : mediaType === 'image' ? 'image' : 'auto'
+  );
   const isVideo =
-    value?.startsWith('data:video/') ||
-    /\.(mp4|webm|mov|m4v|ogv)(\?.*)?$/i.test(value);
+    resolvedPreview?.kind === 'video-file' ||
+    resolvedPreview?.kind === 'youtube' ||
+    resolvedPreview?.kind === 'vimeo';
 
   const acceptTypes =
     mediaType === 'image'
@@ -246,9 +256,17 @@ export const MediaUploadField: React.FC<MediaUploadFieldProps> = ({
                 : 'aspect-video max-h-52'
             } flex items-center justify-center bg-zinc-950 overflow-hidden`}
           >
-            {isVideo ? (
+            {resolvedPreview?.kind === 'youtube' || resolvedPreview?.kind === 'vimeo' ? (
+              <iframe
+                src={resolvedPreview.src}
+                title={`${label} video preview`}
+                className="w-full h-full border-0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
+            ) : resolvedPreview?.kind === 'video-file' ? (
               <video
-                src={value}
+                src={resolvedPreview.src}
                 controls
                 playsInline
                 muted
