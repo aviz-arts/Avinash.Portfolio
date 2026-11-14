@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 
 interface HeaderProps {
   activeTab: 'home' | 'work' | 'about' | 'resume' | 'contact';
@@ -33,7 +34,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   const handleNavClick = (tab: 'home' | 'work' | 'about' | 'resume' | 'contact') => {
     onSelectTab(tab);
-    window.scrollTo({ top: 0, behavior: 'auto' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleAvatarClick = (e: React.MouseEvent) => {
@@ -55,8 +56,9 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="w-full max-w-[1680px] mx-auto flex flex-wrap items-center justify-between gap-y-2.5 gap-x-2 md:flex-nowrap md:gap-4 lg:grid lg:grid-cols-[1fr_auto_1fr] lg:gap-6 px-3.5 sm:px-6 lg:px-10 xl:px-14 py-3 md:py-3.5">
         {/* Zone 1: Portrait avatar + AVINASH heading + faded subtitle */}
         <button
+          type="button"
           onClick={handleAvatarClick}
-          className="order-1 flex items-center gap-2.5 sm:gap-3 text-left group cursor-pointer min-w-0 lg:justify-self-start"
+          className="order-1 flex items-center gap-2.5 sm:gap-3 text-left group cursor-pointer min-w-0 lg:justify-self-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/70 rounded-xl"
           title="Avinash · Game Designer | Lighting Artist"
         >
           <div className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-full overflow-hidden border-2 border-red-500/80 group-hover:border-red-400 transition-colors duration-200 shadow-sm shadow-red-500/20 shrink-0">
@@ -80,7 +82,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </button>
 
-        {/* Zone 2: Navigation tabs directly in the header for Mobile, Tablet & Desktop */}
+        {/* Zone 2: Navigation links rendered directly in the header for Mobile, Tablet & Desktop */}
         <nav
           aria-label="Primary Navigation"
           className="order-3 w-full pt-2 border-t border-zinc-800/60 flex items-center justify-center gap-4 min-[400px]:gap-6 sm:gap-8 md:order-2 md:w-auto md:pt-0 md:border-t-0 md:gap-4 lg:gap-8 lg:justify-self-center shrink-0 text-[11px] sm:text-xs font-mono tracking-wider uppercase text-zinc-400 font-medium"
@@ -90,15 +92,21 @@ export const Header: React.FC<HeaderProps> = ({
             return (
               <button
                 key={tab.id}
+                type="button"
                 onClick={() => handleNavClick(tab.id)}
                 title={tab.title}
-                className={`relative py-1 transition-colors duration-150 cursor-pointer whitespace-nowrap ${
+                aria-current={isActive ? 'page' : undefined}
+                className={`relative py-1 px-0.5 transition-colors duration-150 cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/70 rounded ${
                   isActive ? 'text-white font-bold' : 'hover:text-zinc-200'
                 }`}
               >
                 <span>{tab.label}</span>
                 {isActive && (
-                  <span className="absolute -bottom-1 left-0 right-0 h-0.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.8)]" />
+                  <motion.span
+                    layoutId="header-active-nav-indicator"
+                    transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+                    className="absolute -bottom-1 left-0 right-0 h-0.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.8)]"
+                  />
                 )}
               </button>
             );
@@ -108,8 +116,9 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Zone 3: CTA action button (always visible, zero hamburger dropdown) */}
         <div className="order-2 md:order-3 flex items-center gap-3 shrink-0 lg:justify-self-end">
           <button
+            type="button"
             onClick={() => handleNavClick('contact')}
-            className="flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 text-[11px] sm:text-xs font-semibold text-white bg-red-600 hover:bg-red-500 rounded-xl transition-colors duration-150 whitespace-nowrap shrink-0 font-sans shadow-md shadow-red-600/30 hover:shadow-red-600/50 cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 text-[11px] sm:text-xs font-semibold text-white bg-red-600 hover:bg-red-500 rounded-xl transition-colors duration-150 whitespace-nowrap shrink-0 font-sans shadow-md shadow-red-600/30 hover:shadow-red-600/50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
           >
             <span>Get In Touch</span>
           </button>

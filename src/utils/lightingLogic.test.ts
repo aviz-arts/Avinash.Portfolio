@@ -10,6 +10,7 @@ import {
   hexToRgb,
   rgbToHex,
   formatRgbString,
+  computeEffectiveFogRange,
 } from './lightingLogic';
 
 test('clampByte clamps and rounds numbers within 0-255 and guards non-finite values', () => {
@@ -104,4 +105,28 @@ test('filterProjects handles category and search queries accurately', () => {
   assert.equal(filterProjects(mockProjects, 'all', 'cyberpunk').length, 1);
   assert.equal(filterProjects(mockProjects, 'all', 'blockout').length, 1);
   assert.equal(filterProjects(mockProjects, 'all', 'nonexistent').length, 0);
+});
+
+test('computeEffectiveFogRange prevents inverted near/far bounds and rises gradually', () => {
+  // Even with near > far (which would invert GLSL smoothstep), far stays >= near + 14
+  const clamped = computeEffectiveFogRange({
+    enabled: true,
+    color: '#080812',
+    density: 0.03,
+    near: 45,
+    far: 15,
+  });
+  assert.equal(clamped.enabled, true);
+  assert.ok(clamped.far - clamped.near >= 14);
+
+  // Disabled fog recedes cleanly far beyond scene without sudden blackout
+  const disabled = computeEffectiveFogRange({
+    enabled: false,
+    color: '#080812',
+    density: 0.05,
+    near: 5,
+    far: 35,
+  });
+  assert.equal(disabled.enabled, false);
+  assert.ok(disabled.near > 150 && disabled.far > disabled.near);
 });

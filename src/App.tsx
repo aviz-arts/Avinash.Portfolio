@@ -906,15 +906,15 @@ export default function App() {
         activeTab={activeTab}
         onSelectTab={(tab) => {
           setActiveTab(tab);
-          window.scrollTo({ top: 0, behavior: 'auto' });
+          window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
         onOpenContact={() => {
           setActiveTab('contact');
-          window.scrollTo({ top: 0, behavior: 'auto' });
+          window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
         onOpenResume={() => {
           setActiveTab('resume');
-          window.scrollTo({ top: 0, behavior: 'auto' });
+          window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
         avatarUrl={siteContent.avatarUrl || DEFAULT_AVATAR_URL}
         onOpenOwnerLogin={() => setIsOwnerLoginOpen(true)}
@@ -924,7 +924,7 @@ export default function App() {
 
       <main className="flex-1">
         {activeTab === 'home' && (
-          <div key="tab-home" className="animate-in fade-in duration-150">
+          <div key="tab-home" className="page-transition-enter">
             {/* 2. Hero Section (Home) */}
             <section id="home" className="relative pt-20 pb-16 md:pt-28 md:pb-24 border-b border-zinc-800/80 overflow-hidden bg-gradient-to-b from-[#080808] to-[#050505]">
           {/* Atmospheric Background Video (Very Low Opacity) */}
@@ -1085,7 +1085,7 @@ export default function App() {
                       <button
                         onClick={() => {
                           setActiveTab('work');
-                          window.scrollTo({ top: 0, behavior: 'auto' });
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
                         }}
                         className="px-5 py-3 bg-zinc-900/90 hover:bg-zinc-800 text-white border border-zinc-700/80 rounded-xl text-sm transition-all flex items-center gap-2 font-sans cursor-pointer"
                       >
@@ -1102,7 +1102,7 @@ export default function App() {
                       <button
                         onClick={() => {
                           setActiveTab('resume');
-                          window.scrollTo({ top: 0, behavior: 'auto' });
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
                         }}
                         className="px-4 py-3 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 hover:text-white border border-zinc-700/80 rounded-xl text-sm transition-all flex items-center gap-2 font-mono cursor-pointer"
                         title="Open Resume Tab"
@@ -1173,7 +1173,7 @@ export default function App() {
                           <button
                             onClick={() => {
                               setActiveTab('contact');
-                              window.scrollTo({ top: 0, behavior: 'auto' });
+                              window.scrollTo({ top: 0, behavior: 'smooth' });
                             }}
                             className="text-red-400 hover:text-red-300 transition-colors flex items-center gap-1.5 font-medium cursor-pointer"
                           >
@@ -1210,7 +1210,7 @@ export default function App() {
         )}
 
         {activeTab === 'work' && (
-          <div key="tab-work" className="animate-in fade-in duration-150">
+          <div key="tab-work" className="page-transition-enter">
             {/* 3. Interactive 3D Scene Lighting Studio */}
         {showStudioSection && (
           <section id="studio" className="py-12 sm:py-16 lg:py-20 bg-zinc-950/60 border-b border-zinc-800/80">
@@ -1623,12 +1623,12 @@ export default function App() {
     )}
 
     {activeTab === 'about' && (
-      <div key="tab-about" className="animate-in fade-in duration-150">
+      <div key="tab-about" className="page-transition-enter">
         {/* 7. About, Toolset & Interactive Career Timeline */}
         <AboutSection
           onOpenContact={() => {
             setActiveTab('contact');
-            window.scrollTo({ top: 0, behavior: 'auto' });
+            window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
           profile={profile}
           onUpdateProfile={handleSaveProfile}
@@ -1659,7 +1659,7 @@ export default function App() {
     )}
 
     {activeTab === 'resume' && (
-      <div key="tab-resume" className="animate-in fade-in duration-150">
+      <div key="tab-resume" className="page-transition-enter">
         {/* Dedicated Resume Page (CV, PDF Download & Proficiencies) */}
         <ResumeSection
           profile={profile}
@@ -1679,7 +1679,7 @@ export default function App() {
     )}
 
     {activeTab === 'contact' && (
-      <div key="tab-contact" className="animate-in fade-in duration-150">
+      <div key="tab-contact" className="page-transition-enter">
         {/* Dedicated Contact Page based on Reference Image */}
         <ContactSection
           siteContent={siteContent}

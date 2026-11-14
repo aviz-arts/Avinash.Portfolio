@@ -177,13 +177,13 @@ export const LIGHTING_PRESETS: Record<string, LightSettings> = {
     fog: {
       enabled: false,
       color: '#12151f',
-      density: 0.01,
-      near: 15,
-      far: 60,
+      density: 0.02,
+      near: 12,
+      far: 55,
     },
     toneMapping: {
-      exposure: 1.1,
-      mode: 'neutral',
+      exposure: 1.15,
+      mode: 'aces',
       contrast: 1.0,
       saturation: 1.0,
     },
@@ -333,14 +333,14 @@ export const LIGHTING_PRESETS: Record<string, LightSettings> = {
     },
     fog: {
       enabled: true,
-      color: '#050505',
-      density: 0.025,
-      near: 8,
-      far: 38,
+      color: '#08090c',
+      density: 0.03,
+      near: 9,
+      far: 44,
     },
     toneMapping: {
-      exposure: 0.95,
-      mode: 'cineon',
+      exposure: 0.92,
+      mode: 'aces',
       contrast: 1.4,
       saturation: 0.0,
     },
@@ -353,6 +353,44 @@ export const LIGHTING_PRESETS: Record<string, LightSettings> = {
     },
   },
 };
+
+/**
+ * Compute calibrated, blackout-safe linear fog bounds for Three.js THREE.Fog.
+ * Guarantees a minimum fade band (far - near >= minBand) so GLSL smoothstep(near, far, depth)
+ * rises gradually and never inverts or blackens the scene instantaneously.
+ */
+export function computeEffectiveFogRange(
+  fog: LightSettings['fog'],
+  stageScale = 1.0
+): { near: number; far: number; enabled: boolean } {
+  const safeScale = Number.isFinite(stageScale) && stageScale > 0 ? stageScale : 1.0;
+  const density = Number.isFinite(fog.density) ? Math.max(0, Math.min(0.25, fog.density)) : 0.02;
+
+  if (!fog.enabled || density <= 0.0005) {
+    return {
+      near: 220 * safeScale,
+      far: 560 * safeScale,
+      enabled: false,
+    };
+  }
+
+  const rawNear = Number.isFinite(fog.near) ? fog.near : 10;
+  const rawFar = Number.isFinite(fog.far) ? fog.far : 48;
+  const minBand = 14 * safeScale;
+
+  // Normalize density around baseline 0.03 -> 1.0x span multiplier; lower density widens far gently
+  const normalizedDensity = Math.max(0.05, Math.min(2.5, density / 0.03));
+  const safeNear = Math.max(2 * safeScale, rawNear);
+  const clampedRawFar = Math.max(safeNear + minBand, rawFar);
+  const span = clampedRawFar - safeNear;
+  const adjustedFar = Math.max(safeNear + minBand, safeNear + span / normalizedDensity);
+
+  return {
+    near: safeNear,
+    far: adjustedFar,
+    enabled: true,
+  };
+}
 
 /**
  * Convert polar angles (azimuth & elevation in degrees) to Cartesian coordinates at given radius

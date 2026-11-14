@@ -35,6 +35,7 @@ import {
   kelvinToHex,
   hexToRgb,
   normalizeHex,
+  computeEffectiveFogRange,
 } from '../../utils/lightingLogic';
 import { RgbHexColorControl } from './RgbHexColorControl';
 import {
@@ -91,6 +92,7 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
   const [isCustomModel, setIsCustomModel] = useState<boolean>(false);
   const [modelStats, setModelStats] = useState<ModelStats | null>(null);
   const [stageMode, setStageMode] = useState<AssetStageMode>('object');
+  const [isSceneReady, setIsSceneReady] = useState<boolean>(false);
   const [isLoadingModel, setIsLoadingModel] = useState<boolean>(false);
   const [modelError, setModelError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
@@ -117,7 +119,7 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
   const [renderPass, setRenderPass] = useState<'final' | 'clay' | 'normals' | 'wireframe'>('final');
   const [autoRotate, setAutoRotate] = useState(false);
   const [turntableSpeed, setTurntableSpeed] = useState(1.2);
-  const [pulseDiegeticLight, setPulseDiegeticLight] = useState(true);
+  const [pulseDiegeticLight, setPulseDiegeticLight] = useState(false);
 
   // Refs for Three.js objects
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -134,6 +136,86 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
   const envTextureRef = useRef<THREE.Texture | null>(null);
   const scaledRadiusRef = useRef<number>(4.0);
   const baseRadiusRef = useRef<number>(6.0);
+  const targetScaleRef = useRef<number>(1.0);
+  const modelRevealRef = useRef<{ active: boolean; startTime: number; duration: number }>({
+    active: false,
+    startTime: 0,
+    duration: 520,
+  });
+
+  const wakeLoopRef = useRef<(holdMs?: number) => void>(() => {});
+  const bgColorRef = useRef<THREE.Color>(new THREE.Color('#12151f'));
+  const targetLightStateRef = useRef<{
+    initialized: boolean;
+    active: boolean;
+    keyColor: THREE.Color;
+    keyIntensity: number;
+    keyAzimuth: number;
+    keyElevation: number;
+    keyRadius: number;
+    keySoftness: number;
+    keyBias: number;
+    fillSky: THREE.Color;
+    fillGround: THREE.Color;
+    fillIntensity: number;
+    rimColor: THREE.Color;
+    rimIntensity: number;
+    rimAngle: number;
+    rimElevation: number;
+    rimRadius: number;
+    localColor: THREE.Color;
+    localIntensity: number;
+    localDistance: number;
+    localX: number;
+    localY: number;
+    localZ: number;
+    fogColor: THREE.Color;
+    fogNear: number;
+    fogFar: number;
+    exposure: number;
+    fov: number;
+    wetness: number;
+    envIntensity: number;
+    currentAzimuth: number;
+    currentElevation: number;
+    currentRimAngle: number;
+    currentRimElevation: number;
+  }>({
+    initialized: false,
+    active: false,
+    keyColor: new THREE.Color('#ffffff'),
+    keyIntensity: 2.0,
+    keyAzimuth: 60,
+    keyElevation: 50,
+    keyRadius: 12,
+    keySoftness: 1.0,
+    keyBias: -0.0005,
+    fillSky: new THREE.Color('#c8d6e5'),
+    fillGround: new THREE.Color('#485460'),
+    fillIntensity: 0.6,
+    rimColor: new THREE.Color('#ffffff'),
+    rimIntensity: 2.5,
+    rimAngle: 240,
+    rimElevation: 30,
+    rimRadius: 10,
+    localColor: new THREE.Color('#f1f2f6'),
+    localIntensity: 1.0,
+    localDistance: 12,
+    localX: 0,
+    localY: 3,
+    localZ: 2,
+    fogColor: new THREE.Color('#12151f'),
+    fogNear: 220,
+    fogFar: 560,
+    exposure: 1.15,
+    fov: 40,
+    wetness: 0.1,
+    envIntensity: 1.0,
+    currentAzimuth: 60,
+    currentElevation: 50,
+    currentRimAngle: 240,
+    currentRimElevation: 30,
+  });
 
   // Light objects refs
   const keyLightRef = useRef<THREE.DirectionalLight | null>(null);
@@ -172,9 +254,13 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
       showBase,
       isSoftwareGl: stateRef.current.isSoftwareGl,
     };
-    if (pedestalRef.current) {
+    if (pedestalRef.current && pedestalRef.current.visible !== showBase) {
       pedestalRef.current.visible = showBase;
+      if (rendererRef.current) {
+        rendererRef.current.shadowMap.needsUpdate = true;
+      }
     }
+    wakeLoopRef.current(350);
   }, [lighting, renderPass, autoRotate, turntableSpeed, pulseDiegeticLight, showSkybox, envIntensity, showBase]);
 
   // Apply adaptive camera, OrbitControls, studio base scale, and shadow frustum for Object vs 3D Environment
@@ -268,6 +354,10 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
       scene.remove(activeMeshGroupRef.current);
     }
 
+    targetScaleRef.current = 1.0;
+    prepared.container.scale.setScalar(0.92);
+    prepared.container.position.y = -0.07;
+
     scene.add(prepared.container);
     activeMeshGroupRef.current = prepared.container;
     modelContainerRef.current = prepared.container;
@@ -290,6 +380,20 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
 
     applyRenderPassMode(prepared.container, stateRef.current.renderPass, clayMatRef.current, normalMatRef.current);
     applyStageFraming(prepared.stageMode, prepared.scaledBounds);
+
+    // Pre-compile WebGL shaders before starting reveal so the first visible frame never hitches
+    if (rendererRef.current && cameraRef.current) {
+      rendererRef.current.shadowMap.needsUpdate = true;
+      rendererRef.current.compile(scene, cameraRef.current);
+      rendererRef.current.render(scene, cameraRef.current);
+    }
+
+    modelRevealRef.current = {
+      active: true,
+      startTime: performance.now(),
+      duration: 520,
+    };
+    wakeLoopRef.current(620);
   }, [applyStageFraming]);
 
   // Toggle manually between Object Stage (pedestal) and 3D Environment (full scene scale)
@@ -398,8 +502,10 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
       scene.background = rt.texture;
       scene.backgroundBlurriness = 0.04;
     } else {
-      scene.background = new THREE.Color(stateRef.current.lighting.fog.color);
+      bgColorRef.current.set(stateRef.current.lighting.fog.color);
+      scene.background = bgColorRef.current;
     }
+    wakeLoopRef.current(400);
   }, []);
 
   const handleSelectProceduralSky = (preset: ProceduralSkyPreset) => {
@@ -539,7 +645,8 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
 
     // 1. Scene
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(activeLighting.fog?.color || '#07090e');
+    bgColorRef.current.set(activeLighting.fog?.color || '#12151f');
+    scene.background = bgColorRef.current;
     sceneRef.current = scene;
 
     // 2. Camera with cinematic focal length
@@ -556,7 +663,7 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
       window.innerWidth < 1024 ||
       (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches);
 
-    // 3. Renderer with ACES Tone Mapping
+    // 3. Renderer with ACES Tone Mapping & Demand-Driven Shadow Updates
     const renderer = new THREE.WebGLRenderer({
       antialias: !isSoftwareGl,
       powerPreference: 'high-performance',
@@ -568,10 +675,12 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
     );
     renderer.shadowMap.enabled = !isSoftwareGl;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = true;
 
     // Set ACES Tone Mapping
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = activeLighting.toneMapping?.exposure ?? 1.1;
+    renderer.toneMappingExposure = activeLighting.toneMapping?.exposure ?? 1.15;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     container.replaceChildren(renderer.domElement);
@@ -607,7 +716,7 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
     const [kx, ky, kz] = polarToCartesian(activeLighting.keyLight?.azimuth ?? 60, activeLighting.keyLight?.elevation ?? 50, 12);
     keyLight.position.set(kx, ky, kz);
     keyLight.castShadow = !isSoftwareGl;
-    const shadowSize = isSoftwareGl ? 512 : isCompactDevice ? 1024 : 1536;
+    const shadowSize = isSoftwareGl ? 512 : 1024;
     keyLight.shadow.mapSize.width = shadowSize;
     keyLight.shadow.mapSize.height = shadowSize;
     keyLight.shadow.camera.near = 1;
@@ -653,75 +762,52 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
     scene.add(localLight);
     localLightRef.current = localLight;
 
-    // Atmosphere Fog
+    // Atmosphere Fog (blackout-safe linear depth envelope)
+    const initialFogRange = computeEffectiveFogRange(activeLighting.fog);
     scene.fog = new THREE.Fog(
-      activeLighting.fog?.color || '#07090e',
-      activeLighting.fog?.near ?? 15,
-      activeLighting.fog?.far ?? 60
+      activeLighting.fog?.color || '#12151f',
+      initialFogRange.near,
+      initialFogRange.far
     );
+
+    targetLightStateRef.current.initialized = true;
+    targetLightStateRef.current.keyColor.copy(keyLight.color);
+    targetLightStateRef.current.keyIntensity = keyLight.intensity;
+    targetLightStateRef.current.keyAzimuth = activeLighting.keyLight?.azimuth ?? 60;
+    targetLightStateRef.current.keyElevation = activeLighting.keyLight?.elevation ?? 50;
+    targetLightStateRef.current.currentAzimuth = targetLightStateRef.current.keyAzimuth;
+    targetLightStateRef.current.currentElevation = targetLightStateRef.current.keyElevation;
+    targetLightStateRef.current.fillSky.copy(fillLight.color);
+    targetLightStateRef.current.fillGround.copy(fillLight.groundColor);
+    targetLightStateRef.current.fillIntensity = fillLight.intensity;
+    targetLightStateRef.current.rimColor.copy(rimLight.color);
+    targetLightStateRef.current.rimIntensity = rimLight.intensity;
+    targetLightStateRef.current.rimAngle = activeLighting.rimLight?.angle ?? 240;
+    targetLightStateRef.current.rimElevation = activeLighting.rimLight?.elevation ?? 30;
+    targetLightStateRef.current.currentRimAngle = targetLightStateRef.current.rimAngle;
+    targetLightStateRef.current.currentRimElevation = targetLightStateRef.current.rimElevation;
+    targetLightStateRef.current.localColor.copy(localLight.color);
+    targetLightStateRef.current.localIntensity = localLight.intensity;
+    targetLightStateRef.current.localDistance = localLight.distance;
+    targetLightStateRef.current.fogColor.set(activeLighting.fog?.color || '#12151f');
+    targetLightStateRef.current.fogNear = initialFogRange.near;
+    targetLightStateRef.current.fogFar = initialFogRange.far;
+    targetLightStateRef.current.exposure = renderer.toneMappingExposure;
+    targetLightStateRef.current.fov = camera.fov;
 
     // 7. Add Permanent Studio Pedestal Lookdev Stage (auto-hidden when loading a 3D Environment)
     const pedestal = buildStudioPedestal(8.0);
     pedestalRef.current = pedestal;
     scene.add(pedestal);
 
-    // 8. Initial Model/Environment + HDRI Loading (Restore from IndexedDB if exists)
-    (async () => {
-      try {
-        const storedEnv = await loadUploadedEnvMap();
-        if (storedEnv && storedEnv.buffer && (storedEnv.format === 'hdr' || storedEnv.format === 'exr')) {
-          const envTex = await loadEnvironmentTextureFromArrayBuffer(storedEnv.buffer, storedEnv.format);
-          setSkyPreset('custom');
-          setCustomEnvName(storedEnv.name);
-          setShowSkybox(true);
-          applyEnvironmentMapTexture(envTex, true);
-        }
-      } catch {
-        // Ignore HDRI restore errors
-      }
-
-      try {
-        const stored = await loadUploadedModel();
-        if (stored && stored.buffer && (stored.format === 'fbx' || stored.format === 'glb')) {
-          const payload = await loadModelPayloadFromArrayBuffer(stored.buffer, stored.format);
-          const prepared = prepareModelForLightingStudio(
-            payload.scene,
-            stored.stageMode ? { stageMode: stored.stageMode } : { stageMode: 'auto' },
-            payload.animations.length
-          );
-          rawModelRef.current = {
-            object: payload.scene,
-            animations: payload.animations,
-            name: stored.name,
-            isCustom: true,
-            format: stored.format,
-            buffer: stored.buffer,
-          };
-          replaceSceneModel(prepared, stored.name, true, payload.animations);
-          return;
-        }
-      } catch {
-        // ignore and fallback
-      }
-      // Fallback to default lookdev calibration asset
-      const defaultRaw = buildDefaultLookdevAsset();
-      const prepared = prepareModelForLightingStudio(defaultRaw, { stageMode: 'object', targetSpan: 3.8 });
-      rawModelRef.current = {
-        object: defaultRaw,
-        animations: [],
-        name: 'Studio Lookdev Model',
-        isCustom: false,
-      };
-      replaceSceneModel(prepared, 'Studio Lookdev Model', false, []);
-    })();
-
-    // 9. Viewport- & visibility-aware Render Loop (pauses completely when scrolled offscreen or tab hidden)
+    // 9. On-Demand & Smoothly Interpolated Render Loop (0% idle GPU when resting)
     let frameId = 0;
     let isDisposed = false;
     let isInViewport = true;
     let isPageVisible = typeof document === 'undefined' ? true : !document.hidden;
     let lastTime = performance.now();
     let elapsedTime = 0;
+    let holdUntilTime = performance.now() + 900;
 
     function stopLoop() {
       if (frameId) {
@@ -730,11 +816,39 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
       }
     }
 
-    function startLoop() {
+    function needsRenderFrame(now: number): boolean {
+      if (!isInViewport || !isPageVisible) return false;
+      return (
+        now < holdUntilTime ||
+        (stateRef.current.autoRotate && !isSoftwareGl) ||
+        stateRef.current.pulseDiegeticLight ||
+        mixerRef.current !== null ||
+        modelRevealRef.current.active ||
+        targetLightStateRef.current.active
+      );
+    }
+
+    function startLoop(holdMs = 0) {
+      const targetUntil = performance.now() + holdMs;
+      if (targetUntil > holdUntilTime) {
+        holdUntilTime = targetUntil;
+      }
       if (isDisposed || frameId || !isInViewport || !isPageVisible) return;
       lastTime = performance.now();
       frameId = requestAnimationFrame(tick);
     }
+
+    wakeLoopRef.current = startLoop;
+
+    const handleControlStart = () => startLoop(60000);
+    const handleControlChange = () => startLoop(850);
+    const handleControlEnd = () => {
+      holdUntilTime = performance.now() + 950;
+      startLoop(950);
+    };
+    controls.addEventListener('start', handleControlStart);
+    controls.addEventListener('change', handleControlChange);
+    controls.addEventListener('end', handleControlEnd);
 
     function tick() {
       if (isDisposed || !isInViewport || !isPageVisible) {
@@ -742,12 +856,165 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
         return;
       }
       const now = performance.now();
-      const delta = Math.min((now - lastTime) / 1000, 0.1);
+      const delta = Math.min((now - lastTime) / 1000, 0.08);
       lastTime = now;
       elapsedTime += delta;
 
+      // Smoothly ease newly loaded 3D model into its calibrated studio pose
+      if (modelRevealRef.current.active && activeMeshGroupRef.current) {
+        const progress = Math.min(
+          1,
+          (now - modelRevealRef.current.startTime) / modelRevealRef.current.duration
+        );
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const s = targetScaleRef.current * (0.92 + 0.08 * eased);
+        activeMeshGroupRef.current.scale.setScalar(s);
+        activeMeshGroupRef.current.position.y = -0.07 * (1 - eased);
+        renderer.shadowMap.needsUpdate = true;
+        if (progress >= 1) {
+          activeMeshGroupRef.current.scale.setScalar(targetScaleRef.current);
+          activeMeshGroupRef.current.position.y = 0;
+          modelRevealRef.current.active = false;
+        }
+      }
+
+      // Smooth exponential interpolation of lighting, fog, exposure, wetness & FOV
+      const tgt = targetLightStateRef.current;
+      if (tgt.active) {
+        const alpha = 1 - Math.exp(-delta * 16);
+        let maxDiff = 0;
+
+        const lerpScalar = (cur: number, next: number) => {
+          const diff = Math.abs(cur - next);
+          if (diff > maxDiff) maxDiff = diff;
+          return diff < 0.001 ? next : cur + (next - cur) * alpha;
+        };
+
+        const lerpAngle = (cur: number, next: number) => {
+          let deltaDeg = ((next - cur + 540) % 360) - 180;
+          if (Math.abs(deltaDeg) > maxDiff) maxDiff = Math.abs(deltaDeg);
+          return Math.abs(deltaDeg) < 0.05 ? next : cur + deltaDeg * alpha;
+        };
+
+        // Key light
+        keyLight.color.lerp(tgt.keyColor, alpha);
+        const nextKeyInt = lerpScalar(keyLight.intensity, tgt.keyIntensity);
+        keyLight.intensity = nextKeyInt;
+        const prevAz = tgt.currentAzimuth;
+        const prevEl = tgt.currentElevation;
+        tgt.currentAzimuth = lerpAngle(tgt.currentAzimuth, tgt.keyAzimuth);
+        tgt.currentElevation = lerpScalar(tgt.currentElevation, tgt.keyElevation);
+        const [kxNext, kyNext, kzNext] = polarToCartesian(
+          tgt.currentAzimuth,
+          tgt.currentElevation,
+          tgt.keyRadius
+        );
+        keyLight.position.set(kxNext, kyNext, kzNext);
+        if (
+          Math.abs(tgt.currentAzimuth - prevAz) > 0.01 ||
+          Math.abs(tgt.currentElevation - prevEl) > 0.01 ||
+          Math.abs(keyLight.shadow.radius - tgt.keySoftness) > 0.01
+        ) {
+          renderer.shadowMap.needsUpdate = true;
+        }
+        keyLight.shadow.bias = tgt.keyBias;
+        keyLight.shadow.radius = lerpScalar(keyLight.shadow.radius, tgt.keySoftness);
+
+        // Fill light
+        fillLight.color.lerp(tgt.fillSky, alpha);
+        fillLight.groundColor.lerp(tgt.fillGround, alpha);
+        fillLight.intensity = lerpScalar(fillLight.intensity, tgt.fillIntensity);
+
+        // Rim light
+        rimLight.color.lerp(tgt.rimColor, alpha);
+        rimLight.intensity = lerpScalar(rimLight.intensity, tgt.rimIntensity);
+        tgt.currentRimAngle = lerpAngle(tgt.currentRimAngle, tgt.rimAngle);
+        tgt.currentRimElevation = lerpScalar(tgt.currentRimElevation, tgt.rimElevation);
+        const [rxNext, ryNext, rzNext] = polarToCartesian(
+          tgt.currentRimAngle,
+          tgt.currentRimElevation,
+          tgt.rimRadius
+        );
+        rimLight.position.set(rxNext, ryNext, rzNext);
+
+        // Point light
+        localLight.color.lerp(tgt.localColor, alpha);
+        localLight.intensity = lerpScalar(localLight.intensity, tgt.localIntensity);
+        localLight.distance = lerpScalar(localLight.distance, tgt.localDistance);
+        localLight.position.set(
+          lerpScalar(localLight.position.x, tgt.localX),
+          lerpScalar(localLight.position.y, tgt.localY),
+          lerpScalar(localLight.position.z, tgt.localZ)
+        );
+
+        // Fog & backdrop (gradual rise, blackout-safe)
+        if (scene.fog instanceof THREE.Fog) {
+          scene.fog.color.lerp(tgt.fogColor, alpha);
+          scene.fog.near = lerpScalar(scene.fog.near, tgt.fogNear);
+          scene.fog.far = lerpScalar(scene.fog.far, Math.max(tgt.fogFar, scene.fog.near + 12));
+        }
+        if (!stateRef.current.showSkybox) {
+          bgColorRef.current.lerp(tgt.fogColor, alpha);
+          scene.background = bgColorRef.current;
+        }
+        scene.environmentIntensity = lerpScalar(scene.environmentIntensity, tgt.envIntensity);
+
+        // Exposure & surface wetness
+        renderer.toneMappingExposure = lerpScalar(renderer.toneMappingExposure, tgt.exposure);
+        if (pedestalRef.current) {
+          const studioFloor = pedestalRef.current.getObjectByName('StudioFloor') as
+            | THREE.Mesh
+            | undefined;
+          if (studioFloor && studioFloor.material instanceof THREE.MeshStandardMaterial) {
+            const targetRoughness = THREE.MathUtils.clamp(0.66 - tgt.wetness * 0.54, 0.08, 0.85);
+            const targetMetalness = THREE.MathUtils.clamp(0.18 + tgt.wetness * 0.34, 0.12, 0.6);
+            studioFloor.material.roughness = lerpScalar(
+              studioFloor.material.roughness,
+              targetRoughness
+            );
+            studioFloor.material.metalness = lerpScalar(
+              studioFloor.material.metalness,
+              targetMetalness
+            );
+          }
+        }
+
+        // FOV
+        if (Math.abs(camera.fov - tgt.fov) > 0.02) {
+          camera.fov = lerpScalar(camera.fov, tgt.fov);
+          camera.updateProjectionMatrix();
+        }
+
+        // Check color convergence cleanly
+        const colorDiff =
+          Math.abs(keyLight.color.r - tgt.keyColor.r) +
+          Math.abs(keyLight.color.g - tgt.keyColor.g) +
+          Math.abs(keyLight.color.b - tgt.keyColor.b) +
+          Math.abs(fillLight.color.r - tgt.fillSky.r) +
+          Math.abs(tgt.fogColor.r - (scene.fog instanceof THREE.Fog ? scene.fog.color.r : tgt.fogColor.r));
+
+        if (maxDiff < 0.04 && colorDiff < 0.015) {
+          keyLight.color.copy(tgt.keyColor);
+          fillLight.color.copy(tgt.fillSky);
+          fillLight.groundColor.copy(tgt.fillGround);
+          rimLight.color.copy(tgt.rimColor);
+          localLight.color.copy(tgt.localColor);
+          if (scene.fog instanceof THREE.Fog) {
+            scene.fog.color.copy(tgt.fogColor);
+            scene.fog.near = tgt.fogNear;
+            scene.fog.far = tgt.fogFar;
+          }
+          if (!stateRef.current.showSkybox) {
+            bgColorRef.current.copy(tgt.fogColor);
+            scene.background = bgColorRef.current;
+          }
+          tgt.active = false;
+        }
+      }
+
       if (mixerRef.current) {
         mixerRef.current.update(delta);
+        renderer.shadowMap.needsUpdate = true;
       }
 
       if (controlsRef.current) {
@@ -760,20 +1027,95 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
         controlsRef.current.update();
       }
 
-      // Diegetic light pulse
-      if (localLightRef.current && stateRef.current.pulseDiegeticLight) {
+      // Optional diegetic light pulse
+      if (localLightRef.current && stateRef.current.pulseDiegeticLight && !tgt.active) {
         const pulse = Math.sin(elapsedTime * (stateRef.current.lighting.localLight.pulseSpeed || 1.8));
         localLightRef.current.intensity =
           stateRef.current.lighting.localLight.intensity * (0.85 + pulse * 0.15);
       }
 
       renderer.render(scene, camera);
-      frameId = requestAnimationFrame(tick);
+
+      if (needsRenderFrame(now)) {
+        frameId = requestAnimationFrame(tick);
+      } else {
+        frameId = 0;
+      }
     }
 
-    // Initial frame render + start loop
-    renderer.render(scene, camera);
-    startLoop();
+    // 8. Initial Model/Environment + HDRI Loading (in parallel, before fading canvas in)
+    (async () => {
+      try {
+        const [storedEnv, storedModel] = await Promise.all([
+          loadUploadedEnvMap().catch(() => null),
+          loadUploadedModel().catch(() => null),
+        ]);
+
+        if (isDisposed) return;
+
+        if (storedEnv && storedEnv.buffer && (storedEnv.format === 'hdr' || storedEnv.format === 'exr')) {
+          try {
+            const envTex = await loadEnvironmentTextureFromArrayBuffer(storedEnv.buffer, storedEnv.format);
+            if (!isDisposed) {
+              setSkyPreset('custom');
+              setCustomEnvName(storedEnv.name);
+              setShowSkybox(true);
+              applyEnvironmentMapTexture(envTex, true);
+            }
+          } catch {
+            // Ignore HDRI restore errors
+          }
+        }
+
+        let loadedCustom = false;
+        if (storedModel && storedModel.buffer && (storedModel.format === 'fbx' || storedModel.format === 'glb')) {
+          try {
+            const payload = await loadModelPayloadFromArrayBuffer(storedModel.buffer, storedModel.format);
+            if (!isDisposed) {
+              const prepared = prepareModelForLightingStudio(
+                payload.scene,
+                storedModel.stageMode ? { stageMode: storedModel.stageMode } : { stageMode: 'auto' },
+                payload.animations.length
+              );
+              rawModelRef.current = {
+                object: payload.scene,
+                animations: payload.animations,
+                name: storedModel.name,
+                isCustom: true,
+                format: storedModel.format,
+                buffer: storedModel.buffer,
+              };
+              replaceSceneModel(prepared, storedModel.name, true, payload.animations);
+              loadedCustom = true;
+            }
+          } catch {
+            // ignore and fallback
+          }
+        }
+
+        if (!loadedCustom && !isDisposed) {
+          const defaultRaw = buildDefaultLookdevAsset();
+          const prepared = prepareModelForLightingStudio(defaultRaw, {
+            stageMode: 'object',
+            targetSpan: 3.8,
+          });
+          rawModelRef.current = {
+            object: defaultRaw,
+            animations: [],
+            name: 'Studio Lookdev Model',
+            isCustom: false,
+          };
+          replaceSceneModel(prepared, 'Studio Lookdev Model', false, []);
+        }
+      } finally {
+        if (!isDisposed) {
+          startLoop(650);
+          requestAnimationFrame(() => {
+            if (!isDisposed) setIsSceneReady(true);
+          });
+        }
+      }
+    })();
 
     const intersectionObserver =
       typeof IntersectionObserver !== 'undefined'
@@ -783,7 +1125,7 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
               if (visible !== isInViewport) {
                 isInViewport = visible;
                 if (visible) {
-                  startLoop();
+                  startLoop(300);
                 } else {
                   stopLoop();
                 }
@@ -800,7 +1142,7 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
     const handleVisibilityChange = () => {
       isPageVisible = !document.hidden;
       if (isPageVisible) {
-        startLoop();
+        startLoop(300);
       } else {
         stopLoop();
       }
@@ -815,6 +1157,7 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+      startLoop(150);
     };
 
     const resizeObserver =
@@ -827,6 +1170,9 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
     return () => {
       isDisposed = true;
       stopLoop();
+      controls.removeEventListener('start', handleControlStart);
+      controls.removeEventListener('change', handleControlChange);
+      controls.removeEventListener('end', handleControlEnd);
       if (intersectionObserver) intersectionObserver.disconnect();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (resizeObserver) resizeObserver.disconnect();
@@ -840,99 +1186,101 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
     };
   }, [replaceSceneModel, applyEnvironmentMapTexture]);
 
-  // Synchronize dynamic light parameters without reloading the scene
+  // Synchronize target light/fog parameters smoothly without synchronous GLSL hitches
   useEffect(() => {
     if (!lighting || !keyLightRef.current || !fillLightRef.current || !rimLightRef.current || !localLightRef.current) return;
 
-    // Key Light (position radius adapts to Object vs 3D Environment scale)
+    const tgt = targetLightStateRef.current;
+
     const keyColorHex = normalizeHex(
       lighting.keyLight.color ||
         (lighting.keyLight.kelvin ? kelvinToHex(lighting.keyLight.kelvin) : '#ffffff'),
       '#ffffff'
     );
-    keyLightRef.current.color.set(keyColorHex);
-    keyLightRef.current.intensity = lighting.keyLight.intensity;
-    const keyRadius = stageMode === 'environment' ? Math.max(18, scaledRadiusRef.current * 1.45) : 12;
-    const [kx, ky, kz] = polarToCartesian(lighting.keyLight.azimuth, lighting.keyLight.elevation, keyRadius);
-    keyLightRef.current.position.set(kx, ky, kz);
-    keyLightRef.current.shadow.bias = lighting.keyLight.shadowBias ?? -0.0005;
-    keyLightRef.current.shadow.radius = lighting.keyLight.softness ?? 1.0;
+    tgt.keyColor.set(keyColorHex);
+    tgt.keyIntensity = lighting.keyLight.intensity;
+    tgt.keyRadius = stageMode === 'environment' ? Math.max(18, scaledRadiusRef.current * 1.45) : 12;
+    tgt.keyAzimuth = lighting.keyLight.azimuth;
+    tgt.keyElevation = lighting.keyLight.elevation;
+    tgt.keyBias = lighting.keyLight.shadowBias ?? -0.0005;
+    tgt.keySoftness = lighting.keyLight.softness ?? 1.0;
 
-    // Fill Light with GI multiplier
     const giMult = lighting.fillLight.giBounceMultiplier ?? 1.0;
-    fillLightRef.current.color.set(lighting.fillLight.skyColor);
-    fillLightRef.current.groundColor.set(lighting.fillLight.groundColor);
-    fillLightRef.current.intensity = lighting.fillLight.intensity * giMult;
+    tgt.fillSky.set(normalizeHex(lighting.fillLight.skyColor, '#c8d6e5'));
+    tgt.fillGround.set(normalizeHex(lighting.fillLight.groundColor, '#485460'));
+    tgt.fillIntensity = lighting.fillLight.intensity * giMult;
 
-    // Rim Light
-    rimLightRef.current.color.set(lighting.rimLight.color);
-    rimLightRef.current.intensity = lighting.rimLight.intensity;
-    const rimRadius = stageMode === 'environment' ? Math.max(16, scaledRadiusRef.current * 1.35) : 10;
-    const [rx, ry, rz] = polarToCartesian(lighting.rimLight.angle, lighting.rimLight.elevation ?? 30, rimRadius);
-    rimLightRef.current.position.set(rx, ry, rz);
+    tgt.rimColor.set(normalizeHex(lighting.rimLight.color, '#ffffff'));
+    tgt.rimIntensity = lighting.rimLight.intensity;
+    tgt.rimRadius = stageMode === 'environment' ? Math.max(16, scaledRadiusRef.current * 1.35) : 10;
+    tgt.rimAngle = lighting.rimLight.angle;
+    tgt.rimElevation = lighting.rimLight.elevation ?? 30;
 
-    // Local Point Light
-    localLightRef.current.color.set(lighting.localLight.color);
-    localLightRef.current.intensity = lighting.localLight.intensity;
-    localLightRef.current.distance = stageMode === 'environment'
-      ? Math.max(lighting.localLight.distance, scaledRadiusRef.current * 1.2)
-      : lighting.localLight.distance;
-    localLightRef.current.position.set(lighting.localLight.x, lighting.localLight.y, lighting.localLight.z);
+    tgt.localColor.set(normalizeHex(lighting.localLight.color, '#f1f2f6'));
+    tgt.localIntensity = lighting.localLight.intensity;
+    tgt.localDistance =
+      stageMode === 'environment'
+        ? Math.max(lighting.localLight.distance, scaledRadiusRef.current * 1.2)
+        : lighting.localLight.distance;
+    tgt.localX = lighting.localLight.x;
+    tgt.localY = lighting.localLight.y;
+    tgt.localZ = lighting.localLight.z;
 
-    // Fog, Skybox Background & Environment IBL Intensity
-    if (sceneRef.current) {
-      sceneRef.current.environmentIntensity = envIntensity;
-      if (showSkybox && envRenderTargetRef.current) {
-        sceneRef.current.background = envRenderTargetRef.current.texture;
-        sceneRef.current.backgroundBlurriness = 0.04;
-      } else {
-        sceneRef.current.background = new THREE.Color(lighting.fog.color);
-      }
-      if (sceneRef.current.fog instanceof THREE.Fog) {
-        sceneRef.current.fog.color.set(lighting.fog.color);
-        sceneRef.current.fog.near = lighting.fog.near;
-        sceneRef.current.fog.far = lighting.fog.far;
-      }
+    const fogStageScale =
+      stageMode === 'environment' ? Math.max(1.2, scaledRadiusRef.current / 6) : 1.0;
+    const effectiveFog = computeEffectiveFogRange(lighting.fog, fogStageScale);
+    tgt.fogColor.set(normalizeHex(lighting.fog.color, '#12151f'));
+    tgt.fogNear = effectiveFog.near;
+    tgt.fogFar = effectiveFog.far;
+
+    if (sceneRef.current && showSkybox && envRenderTargetRef.current) {
+      sceneRef.current.background = envRenderTargetRef.current.texture;
+      sceneRef.current.backgroundBlurriness = 0.04;
     }
 
-    // ACES Tone Mapping
+    // Only change WebGLRenderer toneMapping enum when curve actually differs from current renderer curve
     if (rendererRef.current) {
-      if (lighting.toneMapping?.mode === 'reinhard') rendererRef.current.toneMapping = THREE.ReinhardToneMapping;
-      else if (lighting.toneMapping?.mode === 'cineon') rendererRef.current.toneMapping = THREE.CineonToneMapping;
-      else if (lighting.toneMapping?.mode === 'neutral') rendererRef.current.toneMapping = THREE.NeutralToneMapping;
-      else if (lighting.toneMapping?.mode === 'linear') rendererRef.current.toneMapping = THREE.LinearToneMapping;
-      else rendererRef.current.toneMapping = THREE.ACESFilmicToneMapping;
-
-      rendererRef.current.toneMappingExposure = lighting.toneMapping?.exposure ?? 1.1;
-    }
-
-    // Surface wetness feedback on Studio Base deck
-    if (pedestalRef.current) {
-      const studioFloor = pedestalRef.current.getObjectByName('StudioFloor') as THREE.Mesh | undefined;
-      if (studioFloor && studioFloor.material instanceof THREE.MeshStandardMaterial) {
-        const wetness = lighting.surface?.wetness ?? 0.2;
-        studioFloor.material.roughness = THREE.MathUtils.clamp(0.66 - wetness * 0.54, 0.08, 0.85);
-        studioFloor.material.metalness = THREE.MathUtils.clamp(0.18 + wetness * 0.34, 0.12, 0.6);
+      const nextTone =
+        lighting.toneMapping?.mode === 'reinhard'
+          ? THREE.ReinhardToneMapping
+          : lighting.toneMapping?.mode === 'cineon'
+          ? THREE.CineonToneMapping
+          : lighting.toneMapping?.mode === 'neutral'
+          ? THREE.NeutralToneMapping
+          : lighting.toneMapping?.mode === 'linear'
+          ? THREE.LinearToneMapping
+          : THREE.ACESFilmicToneMapping;
+      if (rendererRef.current.toneMapping !== nextTone) {
+        rendererRef.current.toneMapping = nextTone;
+      }
+      if (keyLightRef.current && Math.abs(keyLightRef.current.shadow.bias - tgt.keyBias) > 1e-6) {
+        rendererRef.current.shadowMap.needsUpdate = true;
       }
     }
 
-    // Camera FOV
-    if (cameraRef.current && lighting.camera?.fov) {
-      cameraRef.current.fov = lighting.camera.fov;
-      cameraRef.current.updateProjectionMatrix();
-    }
+    tgt.exposure = lighting.toneMapping?.exposure ?? 1.15;
+    tgt.wetness = lighting.surface?.wetness ?? 0.2;
+    tgt.envIntensity = envIntensity;
+    tgt.fov = lighting.camera?.fov ?? 45;
+    tgt.active = true;
+    wakeLoopRef.current(550);
   }, [lighting, stageMode, showSkybox, envIntensity]);
 
   // Synchronize Render Pass (PBR Lit, Clay, Normals, Wireframe)
   useEffect(() => {
     if (activeMeshGroupRef.current) {
       applyRenderPassMode(activeMeshGroupRef.current, renderPass, clayMatRef.current, normalMatRef.current);
+      if (rendererRef.current) {
+        rendererRef.current.shadowMap.needsUpdate = true;
+      }
+      wakeLoopRef.current(150);
     }
   }, [renderPass]);
 
   // Synchronize Model Scale & proportionally scale Studio Base
   useEffect(() => {
-    if (activeMeshGroupRef.current) {
+    targetScaleRef.current = modelScale;
+    if (activeMeshGroupRef.current && !modelRevealRef.current.active) {
       activeMeshGroupRef.current.scale.setScalar(modelScale);
     }
     if (pedestalRef.current) {
@@ -943,6 +1291,10 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
         scaledBase
       );
     }
+    if (rendererRef.current) {
+      rendererRef.current.shadowMap.needsUpdate = true;
+    }
+    wakeLoopRef.current(150);
   }, [modelScale, stageMode]);
 
   // Center camera focus on the active model or 3D environment
@@ -966,10 +1318,7 @@ export const LightingStudio: React.FC<LightingStudioProps> = ({ className = '' }
     const preset = LIGHTING_PRESETS[presetKey];
     if (preset) {
       setLighting(preset);
-      if (preset.camera?.fov && cameraRef.current) {
-        cameraRef.current.fov = preset.camera.fov;
-        cameraRef.current.updateProjectionMatrix();
-      }
+      wakeLoopRef.current(600);
     }
   };
 
@@ -1082,8 +1431,26 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {/* Three.js Canvas Mount */}
-        <div ref={mountRef} className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing" />
+        {/* Three.js Canvas Mount (fades in smoothly after model & shaders prepare) */}
+        <div
+          ref={mountRef}
+          className={`absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing transition-opacity duration-500 ease-out ${
+            isSceneReady ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
+
+        {/* Smooth Initial Lookdev Stage Curtain */}
+        <div
+          aria-hidden={isSceneReady}
+          className={`absolute inset-0 z-30 bg-[#07090e] flex flex-col items-center justify-center gap-3 pointer-events-none transition-opacity duration-500 ease-out ${
+            isSceneReady ? 'opacity-0' : 'opacity-100'
+          }`}
+        >
+          <div className="w-9 h-9 border-2 border-red-500/80 border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs font-mono tracking-wider text-zinc-400">
+            Preparing 3D Lighting Stage...
+          </span>
+        </div>
 
         {/* Drag and Drop Visual Feedback Overlay */}
         {isDragOver && (
@@ -1535,10 +1902,10 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                 label="Key Light Color (HEX & RGB)"
                 color={lighting.keyLight.color}
                 onChange={(nextHex) =>
-                  setLighting({
-                    ...lighting,
-                    keyLight: { ...lighting.keyLight, color: nextHex },
-                  })
+                  setLighting((prev) => ({
+                    ...prev,
+                    keyLight: { ...prev.keyLight, color: nextHex },
+                  }))
                 }
                 subtitle="Direct key hue (overrides Kelvin tint)"
               />
@@ -1555,12 +1922,13 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   max="6.0"
                   step="0.1"
                   value={lighting.keyLight.intensity}
-                  onChange={(e) =>
-                    setLighting({
-                      ...lighting,
-                      keyLight: { ...lighting.keyLight, intensity: parseFloat(e.target.value) },
-                    })
-                  }
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setLighting((prev) => ({
+                      ...prev,
+                      keyLight: { ...prev.keyLight, intensity: val },
+                    }));
+                  }}
                   className="w-full accent-red-500 cursor-pointer"
                 />
               </div>
@@ -1581,14 +1949,14 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   value={lighting.keyLight.kelvin ?? 5600}
                   onChange={(e) => {
                     const nextKelvin = parseInt(e.target.value, 10);
-                    setLighting({
-                      ...lighting,
+                    setLighting((prev) => ({
+                      ...prev,
                       keyLight: {
-                        ...lighting.keyLight,
+                        ...prev.keyLight,
                         kelvin: nextKelvin,
                         color: kelvinToHex(nextKelvin),
                       },
-                    });
+                    }));
                   }}
                   className="w-full accent-amber-500 cursor-pointer"
                 />
@@ -1605,12 +1973,13 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   min="0"
                   max="360"
                   value={lighting.keyLight.azimuth}
-                  onChange={(e) =>
-                    setLighting({
-                      ...lighting,
-                      keyLight: { ...lighting.keyLight, azimuth: parseInt(e.target.value, 10) },
-                    })
-                  }
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    setLighting((prev) => ({
+                      ...prev,
+                      keyLight: { ...prev.keyLight, azimuth: val },
+                    }));
+                  }}
                   className="w-full accent-red-500 cursor-pointer"
                 />
               </div>
@@ -1626,12 +1995,13 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   min="5"
                   max="85"
                   value={lighting.keyLight.elevation}
-                  onChange={(e) =>
-                    setLighting({
-                      ...lighting,
-                      keyLight: { ...lighting.keyLight, elevation: parseInt(e.target.value, 10) },
-                    })
-                  }
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    setLighting((prev) => ({
+                      ...prev,
+                      keyLight: { ...prev.keyLight, elevation: val },
+                    }));
+                  }}
                   className="w-full accent-red-500 cursor-pointer"
                 />
               </div>
@@ -1650,12 +2020,13 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   max="4.0"
                   step="0.1"
                   value={lighting.keyLight.softness ?? 1.0}
-                  onChange={(e) =>
-                    setLighting({
-                      ...lighting,
-                      keyLight: { ...lighting.keyLight, softness: parseFloat(e.target.value) },
-                    })
-                  }
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setLighting((prev) => ({
+                      ...prev,
+                      keyLight: { ...prev.keyLight, softness: val },
+                    }));
+                  }}
                   className="w-full accent-red-500 cursor-pointer"
                 />
               </div>
@@ -1676,12 +2047,13 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   max="3.0"
                   step="0.05"
                   value={lighting.fillLight.intensity}
-                  onChange={(e) =>
-                    setLighting({
-                      ...lighting,
-                      fillLight: { ...lighting.fillLight, intensity: parseFloat(e.target.value) },
-                    })
-                  }
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setLighting((prev) => ({
+                      ...prev,
+                      fillLight: { ...prev.fillLight, intensity: val },
+                    }));
+                  }}
                   className="w-full accent-cyan-400 cursor-pointer"
                 />
               </div>
@@ -1699,15 +2071,16 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   max="3.0"
                   step="0.05"
                   value={lighting.fillLight.giBounceMultiplier ?? 1.0}
-                  onChange={(e) =>
-                    setLighting({
-                      ...lighting,
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setLighting((prev) => ({
+                      ...prev,
                       fillLight: {
-                        ...lighting.fillLight,
-                        giBounceMultiplier: parseFloat(e.target.value),
+                        ...prev.fillLight,
+                        giBounceMultiplier: val,
                       },
-                    })
-                  }
+                    }));
+                  }}
                   className="w-full accent-cyan-400 cursor-pointer"
                 />
               </div>
@@ -1716,10 +2089,10 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                 label="Sky Hemis Color"
                 color={lighting.fillLight.skyColor}
                 onChange={(nextHex) =>
-                  setLighting({
-                    ...lighting,
-                    fillLight: { ...lighting.fillLight, skyColor: nextHex },
-                  })
+                  setLighting((prev) => ({
+                    ...prev,
+                    fillLight: { ...prev.fillLight, skyColor: nextHex },
+                  }))
                 }
                 subtitle="Indirect dome radiance"
               />
@@ -1728,10 +2101,10 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                 label="Ground Bounce Color"
                 color={lighting.fillLight.groundColor}
                 onChange={(nextHex) =>
-                  setLighting({
-                    ...lighting,
-                    fillLight: { ...lighting.fillLight, groundColor: nextHex },
-                  })
+                  setLighting((prev) => ({
+                    ...prev,
+                    fillLight: { ...prev.fillLight, groundColor: nextHex },
+                  }))
                 }
                 subtitle="Floor diffuse return"
               />
@@ -1752,12 +2125,13 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   max="6.0"
                   step="0.1"
                   value={lighting.rimLight.intensity}
-                  onChange={(e) =>
-                    setLighting({
-                      ...lighting,
-                      rimLight: { ...lighting.rimLight, intensity: parseFloat(e.target.value) },
-                    })
-                  }
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setLighting((prev) => ({
+                      ...prev,
+                      rimLight: { ...prev.rimLight, intensity: val },
+                    }));
+                  }}
                   className="w-full accent-rose-500 cursor-pointer"
                 />
               </div>
@@ -1772,12 +2146,13 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   min="0"
                   max="360"
                   value={lighting.rimLight.angle}
-                  onChange={(e) =>
-                    setLighting({
-                      ...lighting,
-                      rimLight: { ...lighting.rimLight, angle: parseInt(e.target.value, 10) },
-                    })
-                  }
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    setLighting((prev) => ({
+                      ...prev,
+                      rimLight: { ...prev.rimLight, angle: val },
+                    }));
+                  }}
                   className="w-full accent-rose-500 cursor-pointer"
                 />
               </div>
@@ -1786,10 +2161,10 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                 label="Rim Color (HEX & RGB)"
                 color={lighting.rimLight.color}
                 onChange={(nextHex) =>
-                  setLighting({
-                    ...lighting,
-                    rimLight: { ...lighting.rimLight, color: nextHex },
-                  })
+                  setLighting((prev) => ({
+                    ...prev,
+                    rimLight: { ...prev.rimLight, color: nextHex },
+                  }))
                 }
                 subtitle="Edge silhouette kicker"
               />
@@ -1810,12 +2185,13 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   max="8.0"
                   step="0.2"
                   value={lighting.localLight.intensity}
-                  onChange={(e) =>
-                    setLighting({
-                      ...lighting,
-                      localLight: { ...lighting.localLight, intensity: parseFloat(e.target.value) },
-                    })
-                  }
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setLighting((prev) => ({
+                      ...prev,
+                      localLight: { ...prev.localLight, intensity: val },
+                    }));
+                  }}
                   className="w-full accent-orange-500 cursor-pointer"
                 />
               </div>
@@ -1826,7 +2202,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   <span className="text-white font-bold">{pulseDiegeticLight ? 'Active' : 'Static'}</span>
                 </div>
                 <button
-                  onClick={() => setPulseDiegeticLight(!pulseDiegeticLight)}
+                  onClick={() => setPulseDiegeticLight((prev) => !prev)}
                   className={`w-full py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
                     pulseDiegeticLight
                       ? 'bg-orange-600 text-white'
@@ -1841,10 +2217,10 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                 label="Point Color (HEX & RGB)"
                 color={lighting.localLight.color}
                 onChange={(nextHex) =>
-                  setLighting({
-                    ...lighting,
-                    localLight: { ...lighting.localLight, color: nextHex },
-                  })
+                  setLighting((prev) => ({
+                    ...prev,
+                    localLight: { ...prev.localLight, color: nextHex },
+                  }))
                 }
                 subtitle="Localized diegetic accent"
               />
@@ -1860,12 +2236,13 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   max="6.0"
                   step="0.2"
                   value={lighting.localLight.y}
-                  onChange={(e) =>
-                    setLighting({
-                      ...lighting,
-                      localLight: { ...lighting.localLight, y: parseFloat(e.target.value) },
-                    })
-                  }
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setLighting((prev) => ({
+                      ...prev,
+                      localLight: { ...prev.localLight, y: val },
+                    }));
+                  }}
                   className="w-full accent-orange-500 cursor-pointer"
                 />
               </div>
@@ -1946,15 +2323,15 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                 <RgbHexColorControl
                   label="Fog & Backdrop Color"
                   color={lighting.fog.color}
                   onChange={(nextHex) =>
-                    setLighting({
-                      ...lighting,
-                      fog: { ...lighting.fog, color: nextHex },
-                    })
+                    setLighting((prev) => ({
+                      ...prev,
+                      fog: { ...prev.fog, color: nextHex },
+                    }))
                   }
                   subtitle="Atmospheric scattering tint"
                 />
@@ -1972,12 +2349,58 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                     max="1.0"
                     step="0.05"
                     value={lighting.surface?.wetness ?? 0.5}
-                    onChange={(e) =>
-                      setLighting({
-                        ...lighting,
-                        surface: { wetness: parseFloat(e.target.value) },
-                      })
-                    }
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      setLighting((prev) => ({
+                        ...prev,
+                        surface: { wetness: val },
+                      }));
+                    }}
+                    className="w-full accent-emerald-500 cursor-pointer"
+                  />
+                </div>
+
+                <div className="p-2.5 bg-zinc-900/70 border border-zinc-800/80 rounded-xl space-y-1.5 flex flex-col justify-center">
+                  <div className="flex justify-between items-center text-zinc-400">
+                    <span>Volumetric Fog Density</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setLighting((prev) => ({
+                          ...prev,
+                          fog: {
+                            ...prev.fog,
+                            enabled: !prev.fog.enabled,
+                            density: !prev.fog.enabled && (prev.fog.density ?? 0) <= 0 ? 0.03 : prev.fog.density,
+                          },
+                        }))
+                      }
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
+                        lighting.fog.enabled
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-zinc-800 text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      {lighting.fog.enabled ? 'ON' : 'OFF'}
+                    </button>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="0.08"
+                    step="0.002"
+                    value={lighting.fog.enabled ? (lighting.fog.density ?? 0.03) : 0}
+                    onChange={(e) => {
+                      const nextDensity = parseFloat(e.target.value);
+                      setLighting((prev) => ({
+                        ...prev,
+                        fog: {
+                          ...prev.fog,
+                          enabled: nextDensity > 0.001,
+                          density: nextDensity,
+                        },
+                      }));
+                    }}
                     className="w-full accent-emerald-500 cursor-pointer"
                   />
                 </div>
@@ -1989,15 +2412,22 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   </div>
                   <input
                     type="range"
-                    min="1"
-                    max="60"
-                    value={lighting.fog.near}
-                    onChange={(e) =>
-                      setLighting({
-                        ...lighting,
-                        fog: { ...lighting.fog, near: parseInt(e.target.value, 10) },
-                      })
-                    }
+                    min="2"
+                    max="40"
+                    step="1"
+                    value={Math.min(40, Math.max(2, lighting.fog.near))}
+                    onChange={(e) => {
+                      const nextNear = parseInt(e.target.value, 10);
+                      setLighting((prev) => ({
+                        ...prev,
+                        fog: {
+                          ...prev.fog,
+                          enabled: true,
+                          near: nextNear,
+                          far: Math.max(prev.fog.far, nextNear + 14),
+                        },
+                      }));
+                    }}
                     className="w-full accent-emerald-500 cursor-pointer"
                   />
                 </div>
@@ -2009,15 +2439,22 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   </div>
                   <input
                     type="range"
-                    min="15"
-                    max="200"
-                    value={lighting.fog.far}
-                    onChange={(e) =>
-                      setLighting({
-                        ...lighting,
-                        fog: { ...lighting.fog, far: parseInt(e.target.value, 10) },
-                      })
-                    }
+                    min="18"
+                    max="160"
+                    step="1"
+                    value={Math.max(18, Math.min(160, lighting.fog.far))}
+                    onChange={(e) => {
+                      const nextFar = parseInt(e.target.value, 10);
+                      setLighting((prev) => ({
+                        ...prev,
+                        fog: {
+                          ...prev.fog,
+                          enabled: true,
+                          near: Math.min(prev.fog.near, Math.max(2, nextFar - 14)),
+                          far: nextFar,
+                        },
+                      }));
+                    }}
                     className="w-full accent-emerald-500 cursor-pointer"
                   />
                 </div>
@@ -2041,15 +2478,16 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                   max="2.5"
                   step="0.05"
                   value={lighting.toneMapping?.exposure ?? 1.1}
-                  onChange={(e) =>
-                    setLighting({
-                      ...lighting,
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setLighting((prev) => ({
+                      ...prev,
                       toneMapping: {
-                        mode: lighting.toneMapping?.mode ?? 'aces',
-                        exposure: parseFloat(e.target.value),
+                        mode: prev.toneMapping?.mode ?? 'aces',
+                        exposure: val,
                       },
-                    })
-                  }
+                    }));
+                  }}
                   className="w-full accent-purple-500 cursor-pointer"
                 />
               </div>
@@ -2061,13 +2499,13 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                     <button
                       key={curve}
                       onClick={() =>
-                        setLighting({
-                          ...lighting,
+                        setLighting((prev) => ({
+                          ...prev,
                           toneMapping: {
                             mode: curve,
-                            exposure: lighting.toneMapping?.exposure ?? 1.1,
+                            exposure: prev.toneMapping?.exposure ?? 1.1,
                           },
-                        })
+                        }))
                       }
                       className={`py-1 rounded text-center uppercase text-[10px] cursor-pointer transition-colors ${
                         (lighting.toneMapping?.mode ?? 'aces') === curve
@@ -2152,14 +2590,11 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;`;
                     <button
                       key={lens.label}
                       onClick={() => {
-                        setLighting({
-                          ...lighting,
+                        setLighting((prev) => ({
+                          ...prev,
                           camera: { fov: lens.fov },
-                        });
-                        if (cameraRef.current) {
-                          cameraRef.current.fov = lens.fov;
-                          cameraRef.current.updateProjectionMatrix();
-                        }
+                        }));
+                        wakeLoopRef.current(550);
                       }}
                       className={`py-1 rounded text-center text-[10px] font-bold cursor-pointer transition-colors ${
                         (lighting.camera?.fov ?? 45) === lens.fov
